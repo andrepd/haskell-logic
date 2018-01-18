@@ -1,4 +1,4 @@
-module Logic.Parser(parseExpr) where
+module Logic.Parser(parseExp) where
 
 import Logic.AST
 import Text.Parsec
@@ -11,9 +11,9 @@ import Text.Parsec.Language
 -- Language definition
 def = emptyDef { identStart = letter
                , identLetter = alphaNum
-               , opStart = oneOf "&|>="
-               , opLetter = oneOf "&|>="
-               , reservedOpNames = ["&", "|", ">", "="]
+               , opStart = oneOf "&|>=~"
+               , opLetter = oneOf "&|>=~"
+               , reservedOpNames = ["&", "|", ">", "=", "~"]
                , reservedNames = ["T","F"]
                }
 
@@ -21,7 +21,6 @@ def = emptyDef { identStart = letter
 lexer = makeTokenParser def
 
 -- Parsers
-
 m_parens = Token.parens lexer
 m_reserved = Token.reserved lexer
 m_reservedOp = Token.reservedOp lexer
@@ -40,9 +39,9 @@ literalTerm = (m_reserved "T" >> return (Val True))
 identifierTerm = Var <$> m_identifier
 
 -- Operator table, from biggest to lowest priority
-table = [ [ prefix "-" Not ]
+table = [ [ prefix "~" Not ]
         , [ binary "&" And AssocLeft ]
-        , [ binary "|" Or AssocLeft ]
+        , [ binary "|" Or  AssocLeft ]
         , [ binary ">" Imp AssocLeft ]
         , [ binary "=" Iff AssocLeft ]
         ]
@@ -52,5 +51,5 @@ prefix  name fun       = Prefix  (m_reservedOp name >> return fun )
 postfix name fun       = Postfix (m_reservedOp name >> return fun )
 
 -- Parser
-parseExpr :: String -> Either ParseError Formula
-parseExpr = parse expr ""
+parseExp :: String -> Either ParseError Formula
+parseExp = parse expr ""

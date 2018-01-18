@@ -1,10 +1,10 @@
 module Logic.AST where
 
-data Formula = Val Bool
-             | Var String
-             | Not Formula
-             | And Formula Formula
-             | Or  Formula Formula
-             | Imp Formula Formula
-             | Iff Formula Formula
-    deriving(Show)
+data Formula = Val Bool             -- Constant True/False
+             | Var String           -- Atom
+             | Not Formula          -- Negation
+             | And Formula Formula  -- Conjunction
+             | Or  Formula Formula  -- Disjunction
+             | Imp Formula Formula  -- Implication
+             | Iff Formula Formula  -- Equivalence
+    deriving(Eq)
