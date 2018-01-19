@@ -7,4 +7,4 @@ data Formula = Val Bool             -- Constant True/False
              | Or  Formula Formula  -- Disjunction
              | Imp Formula Formula  -- Implication
              | Iff Formula Formula  -- Equivalence
-    deriving(Eq)
+    deriving(Eq, Ord)
