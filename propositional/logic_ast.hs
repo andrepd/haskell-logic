@@ -1,4 +1,4 @@
-module Logic.AST where
+module PropLogic.AST where
 
 data Formula = Val Bool             -- Constant True/False
              | Var String           -- Atom

@@ -1,7 +1,7 @@
 {-# LANGUAGE ParallelListComp #-}
 
-import Logic.Parser
-import Logic.AST
+import PropLogic.Parser
+import PropLogic.AST
 
 import Data.Set (Set)
 import Data.Functor
@@ -95,7 +95,7 @@ truthTable f = let atoms = getAtoms f
 
 -- Generates all possible valuations of a given formula
 possibleValuations :: Formula -> [Valuation]
-possibleValuations f = map alistToFunc $ possibleValuations' $ getAtoms f
+possibleValuations = map alistToFunc . possibleValuations' . getAtoms
 
 -- Generates all possible combinations of (identifier,True/False) from a list of identifiers
 possibleValuations' :: [String] -> [[(String,Bool)]]
@@ -115,9 +115,12 @@ getAtoms = sort . nub . binmap (:) []
 
 -- Checks if a formula is a tautology (true in all valuations), a contradiction (false in all valuations), or satisfiable (true in some valuation)
 tautology, satisfiable, contradiction :: Formula -> Bool
-tautology f = all id (possibleResults f $ possibleValuations f)
+tautology f = and (possibleResults f $ possibleValuations f)
 satisfiable f = not $ contradiction f
 contradiction f = tautology $ Not f
+
+equivalent :: Formula -> Formula -> Bool
+equivalent a b = tautology $ Iff a b
 
 
 
@@ -286,6 +289,15 @@ setdnfToFormula f = setFoldr1 Or $ Set.map (setFoldr1 And) f
 dnf :: Formula -> Formula
 dnf = setdnfToFormula . setdnfSimplify . setdnf
 
+
+-- Conjunction Normal Form
+-- Just apply de Morgan's laws to DNF
+setcnf :: Formula -> SetNF
+setcnf f = Set.map (Set.map Main.negate) $ setdnf $ nnf (Not f)
+
+-- cnf ::
+-- cnf = 
+
 -- Print formulas in DNF/CNF without distracting parentheses
 prettyPrintDNF :: Formula -> String
 prettyPrintDNF f = case f of 
@@ -299,6 +311,18 @@ prettyPrintDNF f = case f of
     Imp x y -> prettyPrintDNF x ++ " ⇒ " ++ prettyPrintDNF y
     Iff x y -> prettyPrintDNF x ++ " ⇔ " ++ prettyPrintDNF y
 
+prettyPrintCNF :: Formula -> String
+prettyPrintCNF f = case f of 
+    Val x -> case x of
+        True -> "⊤"
+        False -> "⊥"
+    Var x -> x
+    Not x -> "¬" ++ prettyPrintDNF x
+    And x y -> prettyPrintDNF x ++ "  ∧  " ++ prettyPrintDNF y
+    Or x y -> prettyPrintDNF x ++ " ∨ " ++ prettyPrintDNF y
+    Imp x y -> prettyPrintDNF x ++ " ⇒ " ++ prettyPrintDNF y
+    Iff x y -> prettyPrintDNF x ++ " ⇔ " ++ prettyPrintDNF y
+
 
 
 ----
@@ -308,6 +332,9 @@ extract (Left _) = error "Parsing error"
 
 putLn = putStrLn ""
 
+boolToSign True  = "✓"
+boolToSign False = "✗"
+
 main = do
     inp <- getLine
     putLn
@@ -315,24 +342,18 @@ main = do
     let table = truthTable formula
     putStrLn table
 
-    if tautology formula 
-        then putStrLn "Tautology"
-        else return ()
-    if satisfiable formula 
-        then putStrLn "Satisfiable"
-        else return ()
-    if contradiction formula 
-        then putStrLn "Contradiction"
-        else return ()
+    putStrLn $ "Tautology     " ++ (boolToSign $ tautology     formula)
+    putStrLn $ "Satisfiable   " ++ (boolToSign $ satisfiable   formula)
+    putStrLn $ "Contradiction " ++ (boolToSign $ contradiction formula)
     putLn
 
     let formula_simp = simplify formula
     putStrLn "Simplified form:"
     putStrLn $ prettyPrint formula_simp
-    putStrLn $ if tautology $ Iff formula formula_simp then "Equivalent" else "Not equivalent!"
+    putStrLn $ if equivalent formula formula_simp then "Equivalent" else "Not equivalent!"
     putLn
 
     let formula_dnf = dnf formula
     putStrLn "DNF form:"
     putStrLn $ prettyPrintDNF formula_dnf
-    putStrLn $ if tautology $ Iff formula formula_dnf then "Equivalent" else "Not equivalent!"
+    putStrLn $ if equivalent formula formula_dnf then "Equivalent" else "Not equivalent!"

@@ -1,6 +1,6 @@
-module Logic.Parser(parseExp) where
+module PropLogic.Parser(parseExp) where
 
-import Logic.AST
+import PropLogic.AST
 import Text.Parsec
 import Text.Parsec.String
 import Text.Parsec.Expr
@@ -11,9 +11,9 @@ import Text.Parsec.Language
 -- Language definition
 def = emptyDef { identStart = letter
                , identLetter = alphaNum
-               , opStart = oneOf "&|>=~"
-               , opLetter = oneOf "&|>=~"
-               , reservedOpNames = ["&", "|", ">", "=", "~"]
+               , opStart = oneOf "&|>=~∧∨⇒⇔"
+               , opLetter = oneOf ""
+               , reservedOpNames = ["&", "|", ">", "=", "~", "∧", "∨", "⇒", "⇔"]
                , reservedNames = ["T","F"]
                }
 
@@ -35,15 +35,17 @@ atomicTerm = literalTerm <|> identifierTerm
 
 literalTerm = (m_reserved "T" >> return (Val True))
           <|> (m_reserved "F" >> return (Val False))
+          <|> (m_reserved "⊤" >> return (Val True))
+          <|> (m_reserved "⊥" >> return (Val False))
 
 identifierTerm = Var <$> m_identifier
 
--- Operator table, from biggest to lowest priority
-table = [ [ prefix "~" Not ]
-        , [ binary "&" And AssocLeft ]
-        , [ binary "|" Or  AssocLeft ]
-        , [ binary ">" Imp AssocLeft ]
-        , [ binary "=" Iff AssocLeft ]
+-- Operator table, from highest to lowest priority
+table = [ [ prefix "~" Not, prefix "¬" Not ]
+        , [ binary "&" And AssocLeft, binary "∧" And AssocLeft ]
+        , [ binary "|" Or  AssocLeft, binary "∨" Or  AssocLeft ]
+        , [ binary ">" Imp AssocLeft, binary "⇒" Imp AssocLeft ]
+        , [ binary "=" Iff AssocLeft, binary "⇔" Iff AssocLeft ]
         ]
 
 binary  name fun assoc = Infix   (m_reservedOp name >> return fun ) assoc
