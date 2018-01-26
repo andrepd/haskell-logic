@@ -265,12 +265,13 @@ type SetNF = Set (Set Formula)
 distrib :: SetNF -> SetNF -> SetNF
 distrib a b = Set.fromList [ Set.unions [i,j] | i <- Set.elems a, j <- Set.elems b ]
 
--- Convert formula to set DNF (assumes it is in NNF already)
+-- Convert formula to set DNF (first put into NNF)
 setdnf :: Formula -> SetNF
-setdnf f = case f of
-    And x y -> distrib (setdnf x) (setdnf y)
-    Or  x y -> Set.union (setdnf x) (setdnf y)
-    _ -> Set.singleton (Set.singleton (f))
+setdnf = setdnf' . nnf where
+    setdnf' f = case f of
+        And x y -> distrib (setdnf' x) (setdnf' y)
+        Or  x y -> Set.union (setdnf' x) (setdnf' y)
+        _ -> Set.singleton (Set.singleton (f))
 
 -- Any conjunction with p and ¬p in its terms is trivially ⊥ so it can be removed from the disjunction
 setdnfRemoveTrivial :: SetNF -> SetNF
@@ -285,8 +286,9 @@ setdnfRemoveSubsumptions :: SetNF -> SetNF
 setdnfRemoveSubsumptions s = Set.filter aux s where
     aux x = not $ any (`Set.isProperSubsetOf` x) s
 
-setdnfSimplify :: SetNF -> SetNF
-setdnfSimplify = setdnfRemoveSubsumptions . setdnfRemoveTrivial
+-- Set DNF with simplifications
+setdnfSimplify :: Formula -> SetNF
+setdnfSimplify = setdnfRemoveSubsumptions . setdnfRemoveTrivial . setdnf
 
 setdnfToFormula :: SetNF -> Formula
 setdnfToFormula f = if null f
@@ -296,14 +298,14 @@ setdnfToFormula f = if null f
 
 -- Alternative definition of DNF from set DNF
 dnf :: Formula -> Formula
-dnf = setdnfToFormula . setdnfSimplify . setdnf . nnf
+dnf = setdnfToFormula . setdnfSimplify
 
 
 
 -- Conjunction Normal Form
 -- Apply de Morgan's laws to go from DNF to CNF
 setcnf :: Formula -> SetNF
-setcnf f = Set.map (Set.map negateTerm) (setdnf $ nnf $ Not f)
+setcnf f = Set.map (Set.map negateTerm) (setdnf $ Not f)
 
 -- Any disjunction with p and ¬p in its terms is trivially ⊤ so it can be removed from the conjunction
 setcnfRemoveTrivial :: SetNF -> SetNF
@@ -312,8 +314,8 @@ setcnfRemoveTrivial = setdnfRemoveTrivial
 setcnfRemoveSubsumptions :: SetNF -> SetNF
 setcnfRemoveSubsumptions = setdnfRemoveSubsumptions
 
-setcnfSimplify :: SetNF -> SetNF
-setcnfSimplify = setcnfRemoveSubsumptions . setcnfRemoveTrivial
+setcnfSimplify :: Formula -> SetNF
+setcnfSimplify = setcnfRemoveSubsumptions . setcnfRemoveTrivial . setcnf
 
 setcnfToFormula :: SetNF -> Formula
 setcnfToFormula f = if null f
@@ -322,7 +324,7 @@ setcnfToFormula f = if null f
     where setFoldr1 f = foldr1 f . Set.elems
 
 cnf :: Formula -> Formula
-cnf = setcnfToFormula . setcnfSimplify . setcnf
+cnf = setcnfToFormula . setcnfSimplify
 
 
 -- Print formulas in DNF/CNF without distracting parentheses
@@ -355,23 +357,23 @@ prettyPrintCNF' f = case f of
 
 
 -- Definitional CNF
--- 
+-- Helper function, given a number N yields "p_N" and the next number
 mkPropName :: Int -> (String, Int)
 mkPropName n = ("p_" ++ show n, n+1)
 
-maincnf :: (Formula, [(Formula, String)], Int) -> (Formula, [(Formula, String)], Int)
-maincnf trip@(f, defs, n) = case f of
+-- "Core" of the defCNF function. This is applied to a formula in NENF. Maintains state in the form of an association-list of definitions and the number N for the next definitional variable name
+maindefcnf :: (Formula, [(Formula, String)], Int) -> (Formula, [(Formula, String)], Int)
+maindefcnf trip@(f, defs, n) = case f of
     And x y -> defstep And (x,y) trip
     Or  x y -> defstep Or  (x,y) trip
     Iff x y -> defstep Iff (x,y) trip
     _ -> trip
   where 
     defstep op (p,q) (f, defs, n) = 
-        let
-            -- Left-hand side
-            (f1, defs1, n1) = maincnf (p, defs,  n )
+        let -- Left-hand side
+            (f1, defs1, n1) = maindefcnf (p, defs,  n )
             -- Right-hand side
-            (f2, defs2, n2) = maincnf (q, defs1, n1)
+            (f2, defs2, n2) = maindefcnf (q, defs1, n1)
             -- Join left- and right-hand sides
             f' = op f1 f2
             -- Lookup f' in definitions
@@ -383,9 +385,36 @@ maincnf trip@(f, defs, n) = case f of
             Nothing -> let (v, n3) = mkPropName n2
                        in (Var v, (f',v):defs2, n3)
 
+-- Optimization: step through as many conjunctions as possible, then through as many disjunctions as possible, to avoid working on stuff that is already in CNF, then do main
+optdefcnfAnd trip@(f, defs, n) = case f of
+    And x y -> defstep And (x,y) trip
+    _ -> optdefcnfOr trip
+  where
+    defstep op (x,y) (f, defs, n) =
+        let (f1, defs1, n1) = optdefcnfAnd (x, defs,  n )
+            (f2, defs2, n2) = optdefcnfAnd (y, defs1, n1)
+            f' = op f1 f2
+        in (f', defs2, n2)
+
+optdefcnfOr trip@(f, defs, n) = case f of
+    Or x y -> defstep Or (x,y) trip
+    _ -> maindefcnf trip
+  where
+    defstep op (x,y) (f, defs, n) =
+        let (f1, defs1, n1) = optdefcnfOr (x, defs,  n )
+            (f2, defs2, n2) = optdefcnfOr (y, defs1, n1)
+            f' = op f1 f2
+        in (f', defs2, n2)
+
+-- Given the result of a maindefcnf pass, yields the conjunction of f and the definitions in defs (themselves converted to CNF)
 defcnfToFormula :: (Formula, [(Formula, String)], Int) -> Formula
 defcnfToFormula (f, defs, _) = And f rest
     where rest = foldr1 And (map cnf (map (\(x,y) -> Iff (Var y) x) defs))
+
+-- Same but yields set representation
+defcnfToSet :: (Formula, [(Formula, String)], Int) -> SetNF
+defcnfToSet (f, defs, _) = Set.union (setcnfSimplify f) rest
+    where rest = Set.unions $ map setcnfSimplify (map (\(x,y) -> Iff (Var y) x) defs)
 
 -- -- Helper function: finds smallest N so that there isn't any variable named p_n with n>=N
 -- helper f =
@@ -394,7 +423,12 @@ defcnfToFormula (f, defs, _) = And f rest
 --         a'' = map (drop 2) a'
 
 defcnf :: Formula -> Formula
-defcnf f = defcnfToFormula $ maincnf (nenf f, [], 1)
+-- defcnf f = defcnfToFormula $ maindefcnf (nenf f, [], 1)
+defcnf f = defcnfToFormula $ optdefcnfAnd (nenf f, [], 1)  -- Optimised version
+
+setdefcnf :: Formula -> SetNF
+-- setdefcnf f = defcnfToSet $ maindefcnf (nenf f, [], 1)
+setdefcnf f = defcnfToSet $ optdefcnfAnd (nenf f, [], 1)  -- Optimised version
 
 
 
@@ -451,9 +485,9 @@ main = do
     putLn
 
     let formula_dcnf = defcnf formula
-    putStrLn "Definitional CNF"
+    putStrLn "Definitional CNF (optimised)"
     putStrLn $ prettyPrintCNF $ formula_dcnf
+    -- putStrLn $ prettyPrintCNF $ setcnfToFormula $ setdefcnf formula
+    -- putStrLn $ show $ setdefcnf formula
     -- putStrLn $ if equivalent formula formula_dcnf then "Equivalent" else "Not equivalent!"
     putLn
-
-    -- putStrLn $ truthTable $ Iff formula formula_dcnf
