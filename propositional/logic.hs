@@ -10,7 +10,7 @@ import Data.List (intercalate, nub, sort)
 import Data.Function ((&))
 import qualified Data.Set as Set
 
-import Debug.Trace(traceShow, traceShowId)
+import Debug.Trace(trace, traceShow, traceShowId)
 -- traceShow _ = id
 -- traceShowId = id
 
@@ -67,12 +67,16 @@ prettyPrint f = case f of
     Imp x y -> "(" ++ prettyPrint x ++ " ⇒ " ++ prettyPrint y ++ ")"
     Iff x y -> "(" ++ prettyPrint x ++ " ⇔ " ++ prettyPrint y ++ ")"
 
+instance Show Formula where
+    show f = "parseExp \"" ++ prettyPrint f ++ "\""
+
 
 
 -- Helper function, turns association list to function
 alistToFunc :: (Eq a) => [(a,b)] -> (a -> b)
 alistToFunc [] _ = error "Key miss"
 alistToFunc ((key,val):xs) x = if key == x then val else alistToFunc xs x
+-- alistToFunc list elem = 
 
 -- Prints a truth table for a given formula
 truthTable :: Formula -> String
@@ -119,6 +123,7 @@ tautology f = and (possibleResults f $ possibleValuations f)
 satisfiable f = not $ contradiction f
 contradiction f = tautology $ Not f
 
+-- Checks if two formulae are equivalent (a ⇔ b)
 equivalent :: Formula -> Formula -> Bool
 equivalent a b = tautology $ Iff a b
 
@@ -169,9 +174,10 @@ subst (x:xs) f = unmap x (subst xs f)
 
 
 
-negate :: Formula -> Formula
-negate (Not p) = p
-negate p = (Not p)
+negateTerm :: Formula -> Formula
+negateTerm p = case p of
+    Not x -> x
+    x -> Not x
 
 -- A literal is a constant or an atom
 literal :: Formula -> Bool
@@ -198,17 +204,17 @@ nnf' f = case f of
 -- NNF after simplify
 nnf = nnf' . simplify
 
--- Negation/Equivalence Normal Form
+-- Negation-Equivalence Normal Form
 nenf' f = case f of
-    And x y -> And (nenf' x) (nenf' y)
-    Or  x y -> Or  (nenf' x) (nenf' y)
-    Imp x y -> Or (nenf' $ Not x) (nenf' y)
-    Iff x y -> Iff (nenf' x) (nenf' y)
     Not (Not x) -> nenf' x
     Not (And x y) -> Or  (nenf' $ Not x) (nenf' $ Not y)
     Not (Or  x y) -> And (nenf' $ Not x) (nenf' $ Not y)
     Not (Imp x y) -> And (nenf' x) (nenf' $ Not y)
     Not (Iff x y) -> Iff (nenf' x) (nenf' $ Not y)
+    And x y -> And (nenf' x) (nenf' y)
+    Or  x y -> Or  (nenf' x) (nenf' y)
+    Imp x y -> Or (nenf' $ Not x) (nenf' y)
+    Iff x y -> Iff (nenf' x) (nenf' y)
     _ -> f
 
 -- NENF after simplify
@@ -252,13 +258,14 @@ dnf f = let atoms = getAtoms f
 
 -- Disjunction Normal Form: set-based approach
 -- A formula in DNF is represented by a set of sets, i.e. {{a,b},{c,d,e}} = (a∧b)∨(c∧d∧e)
+-- Likewise, a formula in CNF is represented by a set of sets, i.e. {{a,b},{c,d,e}} = (a∨b)∧(c∨d∨e)
 type SetNF = Set (Set Formula)
 
 -- Conjuntion of two formulas in DNF as represented by sets 
 distrib :: SetNF -> SetNF -> SetNF
 distrib a b = Set.fromList [ Set.unions [i,j] | i <- Set.elems a, j <- Set.elems b ]
 
--- Convert formula to set DNF
+-- Convert formula to set DNF (assumes it is in NNF already)
 setdnf :: Formula -> SetNF
 setdnf f = case f of
     And x y -> distrib (setdnf x) (setdnf y)
@@ -271,57 +278,125 @@ setdnfRemoveTrivial s = Set.filter aux s where
     aux s = let (pos,neg) = Set.partition positive s
                 positive (Not x) = False
                 positive x = True
-            in null $ Set.intersection pos (Set.map Main.negate neg)
+            in null $ Set.intersection (pos) (Set.map negateTerm neg)
 
--- If a conjunction is ''a subset of'' another, then in a valuation where the latter is satisfiable the former also is. Therefore we can remove the former from the disjunction  
+-- If a conjunction is ''a subset of'' another, then in a valuation where the latter is satisfiable the former also is. Therefore we can remove the former from the disjunction
 setdnfRemoveSubsumptions :: SetNF -> SetNF
 setdnfRemoveSubsumptions s = Set.filter aux s where
-    aux x = not $ any (x `Set.isProperSubsetOf`) s
+    aux x = not $ any (`Set.isProperSubsetOf` x) s
 
 setdnfSimplify :: SetNF -> SetNF
 setdnfSimplify = setdnfRemoveSubsumptions . setdnfRemoveTrivial
 
 setdnfToFormula :: SetNF -> Formula
-setdnfToFormula f = setFoldr1 Or $ Set.map (setFoldr1 And) f
+setdnfToFormula f = if null f
+    then Val False
+    else setFoldr1 Or $ Set.map (\x -> if null x then Val True else setFoldr1 And x) f
     where setFoldr1 f = foldr1 f . Set.elems
 
 -- Alternative definition of DNF from set DNF
 dnf :: Formula -> Formula
-dnf = setdnfToFormula . setdnfSimplify . setdnf
+dnf = setdnfToFormula . setdnfSimplify . setdnf . nnf
+
 
 
 -- Conjunction Normal Form
--- Just apply de Morgan's laws to DNF
+-- Apply de Morgan's laws to go from DNF to CNF
 setcnf :: Formula -> SetNF
-setcnf f = Set.map (Set.map Main.negate) $ setdnf $ nnf (Not f)
+setcnf f = Set.map (Set.map negateTerm) (setdnf $ nnf $ Not f)
 
--- cnf ::
--- cnf = 
+-- Any disjunction with p and ¬p in its terms is trivially ⊤ so it can be removed from the conjunction
+setcnfRemoveTrivial :: SetNF -> SetNF
+setcnfRemoveTrivial = setdnfRemoveTrivial
+
+setcnfRemoveSubsumptions :: SetNF -> SetNF
+setcnfRemoveSubsumptions = setdnfRemoveSubsumptions
+
+setcnfSimplify :: SetNF -> SetNF
+setcnfSimplify = setcnfRemoveSubsumptions . setcnfRemoveTrivial
+
+setcnfToFormula :: SetNF -> Formula
+setcnfToFormula f = if null f
+    then Val True
+    else setFoldr1 And $ Set.map (\x -> if null x then Val False else setFoldr1 Or x) f
+    where setFoldr1 f = foldr1 f . Set.elems
+
+cnf :: Formula -> Formula
+cnf = setcnfToFormula . setcnfSimplify . setcnf
+
 
 -- Print formulas in DNF/CNF without distracting parentheses
 prettyPrintDNF :: Formula -> String
-prettyPrintDNF f = case f of 
-    Val x -> case x of
-        True -> "⊤"
-        False -> "⊥"
-    Var x -> x
-    Not x -> "¬" ++ prettyPrintDNF x
-    And x y -> prettyPrintDNF x ++ " ∧ " ++ prettyPrintDNF y
-    Or x y -> prettyPrintDNF x ++ "  ∨  " ++ prettyPrintDNF y
-    Imp x y -> prettyPrintDNF x ++ " ⇒ " ++ prettyPrintDNF y
-    Iff x y -> prettyPrintDNF x ++ " ⇔ " ++ prettyPrintDNF y
+prettyPrintDNF f = "(" ++ prettyPrintDNF' f ++ ")" where
+    prettyPrintDNF' f = case f of 
+        Val x -> case x of
+            True -> "⊤"
+            False -> "⊥"
+        Var x -> x
+        Not x -> "¬" ++ prettyPrintDNF' x
+        And x y -> prettyPrintDNF' x ++ " ∧ " ++ prettyPrintDNF' y
+        Or x y -> prettyPrintDNF' x ++ ") ∨ (" ++ prettyPrintDNF' y
+        Imp x y -> prettyPrintDNF' x ++ " ⇒ " ++ prettyPrintDNF' y
+        Iff x y -> prettyPrintDNF' x ++ " ⇔ " ++ prettyPrintDNF' y
 
 prettyPrintCNF :: Formula -> String
-prettyPrintCNF f = case f of 
+prettyPrintCNF f = "(" ++ prettyPrintCNF' f ++ ")" where
+prettyPrintCNF' f = case f of 
     Val x -> case x of
         True -> "⊤"
         False -> "⊥"
     Var x -> x
-    Not x -> "¬" ++ prettyPrintDNF x
-    And x y -> prettyPrintDNF x ++ "  ∧  " ++ prettyPrintDNF y
-    Or x y -> prettyPrintDNF x ++ " ∨ " ++ prettyPrintDNF y
-    Imp x y -> prettyPrintDNF x ++ " ⇒ " ++ prettyPrintDNF y
-    Iff x y -> prettyPrintDNF x ++ " ⇔ " ++ prettyPrintDNF y
+    Not x -> "¬" ++ prettyPrintCNF' x
+    And x y -> prettyPrintCNF' x ++ ") ∧ (" ++ prettyPrintCNF' y
+    Or x y -> prettyPrintCNF' x ++ " ∨ " ++ prettyPrintCNF' y
+    Imp x y -> prettyPrintCNF' x ++ " ⇒ " ++ prettyPrintCNF' y
+    Iff x y -> prettyPrintCNF' x ++ " ⇔ " ++ prettyPrintCNF' y
+
+
+
+-- Definitional CNF
+-- 
+mkPropName :: Int -> (String, Int)
+mkPropName n = ("p_" ++ show n, n+1)
+
+maincnf :: (Formula, [(Formula, String)], Int) -> (Formula, [(Formula, String)], Int)
+maincnf trip@(f, defs, n) = case f of
+    And x y -> defstep And (x,y) trip
+    Or  x y -> defstep Or  (x,y) trip
+    Iff x y -> defstep Iff (x,y) trip
+    _ -> trip
+  where 
+    defstep op (p,q) (f, defs, n) = 
+        let
+            -- Left-hand side
+            (f1, defs1, n1) = maincnf (p, defs,  n )
+            -- Right-hand side
+            (f2, defs2, n2) = maincnf (q, defs1, n1)
+            -- Join left- and right-hand sides
+            f' = op f1 f2
+            -- Lookup f' in definitions
+            name = lookup f' defs
+        in case name of
+            -- Formula already in defs
+            Just v -> (Var v, defs2, n2)
+            -- New definition
+            Nothing -> let (v, n3) = mkPropName n2
+                       in (Var v, (f',v):defs2, n3)
+
+defcnfToFormula :: (Formula, [(Formula, String)], Int) -> Formula
+defcnfToFormula (f, defs, _) = And f rest
+    where rest = foldr1 And (map cnf (map (\(x,y) -> Iff (Var y) x) defs))
+
+-- -- Helper function: finds smallest N so that there isn't any variable named p_n with n>=N
+-- helper f =
+--     let atoms = getAtoms f
+--         a' = filter ("p_" `isPrefixOf`) atoms
+--         a'' = map (drop 2) a'
+
+defcnf :: Formula -> Formula
+defcnf f = defcnfToFormula $ maincnf (nenf f, [], 1)
+
+
 
 
 
@@ -355,5 +430,30 @@ main = do
 
     let formula_dnf = dnf formula
     putStrLn "DNF form:"
+    -- putStrLn $ prettyPrintDNF $ (nnf) formula
+    -- putStrLn $ prettyPrintDNF $ (setdnfToFormula . setdnf . nnf) formula
+    -- putStrLn $ prettyPrintDNF $ (setdnfToFormula . setdnfRemoveTrivial . setdnf . nnf) formula
+    -- putStrLn $ prettyPrintDNF $ (setdnfToFormula . setdnfRemoveSubsumptions . setdnfRemoveTrivial . setdnf . nnf) formula
     putStrLn $ prettyPrintDNF formula_dnf
     putStrLn $ if equivalent formula formula_dnf then "Equivalent" else "Not equivalent!"
+    putLn
+
+    let formula_cnf = cnf formula
+    putStrLn "CNF form:"
+    putStrLn $ prettyPrintCNF formula_cnf
+    putStrLn $ if equivalent formula formula_cnf then "Equivalent" else "Not equivalent!"
+    putLn
+
+    let formula_nenf = nenf formula
+    putStrLn "NENF"
+    putStrLn $ prettyPrint formula_nenf
+    putStrLn $ if equivalent formula formula_nenf then "Equivalent" else "Not equivalent!"
+    putLn
+
+    let formula_dcnf = defcnf formula
+    putStrLn "Definitional CNF"
+    putStrLn $ prettyPrintCNF $ formula_dcnf
+    -- putStrLn $ if equivalent formula formula_dcnf then "Equivalent" else "Not equivalent!"
+    putLn
+
+    -- putStrLn $ truthTable $ Iff formula formula_dcnf
