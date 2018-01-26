@@ -9,6 +9,8 @@ import Data.List (intercalate, nub, sort)
 -- import Data.Either
 import Data.Function ((&))
 import qualified Data.Set as Set
+import Data.Foldable
+import Data.Ord (comparing)
 
 import Debug.Trace(trace, traceShow, traceShowId)
 -- traceShow _ = id
@@ -174,6 +176,11 @@ subst (x:xs) f = unmap x (subst xs f)
 
 
 
+positive :: Formula -> Bool
+positive p = case p of
+    Not x -> False
+    x     -> True
+
 negateTerm :: Formula -> Formula
 negateTerm p = case p of
     Not x -> x
@@ -277,8 +284,6 @@ setdnf = setdnf' . nnf where
 setdnfRemoveTrivial :: SetNF -> SetNF
 setdnfRemoveTrivial s = Set.filter aux s where
     aux s = let (pos,neg) = Set.partition positive s
-                positive (Not x) = False
-                positive x = True
             in null $ Set.intersection (pos) (Set.map negateTerm neg)
 
 -- If a conjunction is ''a subset of'' another, then in a valuation where the latter is satisfiable the former also is. Therefore we can remove the former from the disjunction
@@ -354,6 +359,20 @@ prettyPrintCNF' f = case f of
     Imp x y -> prettyPrintCNF' x ++ " ⇒ " ++ prettyPrintCNF' y
     Iff x y -> prettyPrintCNF' x ++ " ⇔ " ++ prettyPrintCNF' y
 
+prettyPrintSetDNF :: SetNF -> String
+prettyPrintSetDNF f = intercalate " ∨ " . map (\x -> "("++x++")") . Set.elems $ Set.map (intercalate " ∧ " . Set.elems . (Set.map prettyPrint)) f
+    -- where 
+    --     aux y = case y of
+    --         Var x -> x
+    --         _ -> error "Invalid setDNF"
+
+prettyPrintSetCNF :: SetNF -> String
+prettyPrintSetCNF f = intercalate " ∧ " . map (\x -> "("++x++")") . Set.elems $ Set.map (intercalate " ∨ " . Set.elems . (Set.map prettyPrint)) f
+    -- where 
+    --     aux y = case y of
+    --         Var x -> x
+    --         _ -> error "Invalid setCNF"
+
 
 
 -- Definitional CNF
@@ -408,13 +427,19 @@ optdefcnfOr trip@(f, defs, n) = case f of
 
 -- Given the result of a maindefcnf pass, yields the conjunction of f and the definitions in defs (themselves converted to CNF)
 defcnfToFormula :: (Formula, [(Formula, String)], Int) -> Formula
-defcnfToFormula (f, defs, _) = And f rest
-    where rest = foldr1 And (map cnf (map (\(x,y) -> Iff (Var y) x) defs))
+-- defcnfToFormula (f, defs, _) = And f rest
+--     where rest = foldr1 And (map cnf (map (\(x,y) -> Iff (Var y) x) defs))
+defcnfToFormula (f, defs, _) = case defs of
+    [] -> f
+    _  -> And f rest
+        where rest = foldr1 And (map cnf (map (\(x,y) -> Iff (Var y) x) defs))
 
 -- Same but yields set representation
 defcnfToSet :: (Formula, [(Formula, String)], Int) -> SetNF
-defcnfToSet (f, defs, _) = Set.union (setcnfSimplify f) rest
-    where rest = Set.unions $ map setcnfSimplify (map (\(x,y) -> Iff (Var y) x) defs)
+defcnfToSet (f, defs, _) = case defs of
+    [] -> setcnfSimplify f
+    _  -> Set.union (setcnfSimplify f) rest
+        where rest = Set.unions $ map setcnfSimplify (map (\(x,y) -> Iff (Var y) x) defs)
 
 -- -- Helper function: finds smallest N so that there isn't any variable named p_n with n>=N
 -- helper f =
@@ -432,7 +457,60 @@ setdefcnf f = defcnfToSet $ optdefcnfAnd (nenf f, [], 1)  -- Optimised version
 
 
 
+-- DPLL --
 
+-- 1-unit rule
+dpll1unit :: SetNF -> SetNF
+dpll1unit f | trace ("1unit " ++ prettyPrintSetCNF f) False = undefined
+dpll1unit f = 
+    let units = Set.filter (\x -> Set.size x == 1) f
+        u = head $ Set.elems $ head $ Set.elems units
+        u' = negateTerm u
+        -- For each unit u, remove instances of -u from each clause
+        f' = Set.map (Set.delete u') f
+        -- For each unit u, remove clauses that contain u
+        f'' = Set.filter (\x -> not $ (u `Set.member` x)) f'
+    in if null units
+           then f
+           else dpll1unit f''
+    
+-- Affirmative-negative rule
+dpllAffNeg :: SetNF -> SetNF
+dpllAffNeg f | trace ("affneg " ++ prettyPrintSetCNF f) False = undefined
+dpllAffNeg f = 
+    let lits = Set.unions $ Set.elems f
+        (pos,neg) = Set.partition positive $ lits
+        nonpure = Set.intersection pos (Set.map negateTerm neg)
+        pure = Set.difference pos nonpure
+    in if null pure
+           then f
+           else dpllAffNeg $ Set.filter (\x -> null $ Set.intersection pure x) f 
+
+-- -- Splitting rule
+-- dpllSplit :: SetNF -> SetNF
+-- dpllSplit f = 
+
+dpll :: SetNF -> Bool
+dpll f | trace ("dpll " ++ prettyPrintSetCNF f) False = undefined
+dpll f = 
+    let f' = dpll1unit f  
+        f'' = dpllAffNeg f'
+
+        lits = traceShowId $ Set.filter positive $ Set.unions $ Set.elems f''
+        p = Data.Foldable.maximumBy (comparing (\x -> count x f'')) lits
+
+        count :: Formula -> SetNF -> Int
+        count x f = (Set.size $ Set.filter (x `Set.member`) f) + (Set.size $ Set.filter (negateTerm x `Set.member`) f)
+
+    in if null f || null f' || null f''
+          then True
+          else if any null (Set.elems f) || any null (Set.elems f') || any null (Set.elems f'')
+              then False
+              else dpll (Set.insert (Set.singleton p) f'') || dpll (Set.insert (Set.singleton $ negateTerm p) f'')
+
+satisfiableDPLL, tautologyDPLL :: Formula -> Bool
+satisfiableDPLL = dpll . setdefcnf
+tautologyDPLL = not . satisfiableDPLL . Not
 
 ----
 
@@ -491,3 +569,6 @@ main = do
     -- putStrLn $ show $ setdefcnf formula
     -- putStrLn $ if equivalent formula formula_dcnf then "Equivalent" else "Not equivalent!"
     putLn
+
+    putStrLn $ "Satisfiable: " ++ (show $ satisfiableDPLL formula)
+
