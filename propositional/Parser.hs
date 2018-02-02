@@ -1,6 +1,6 @@
-module PropLogic.Parser(parseExp) where
+module Parser(parseExp) where
 
-import PropLogic.AST
+import AST
 import Text.Parsec
 import Text.Parsec.String
 import Text.Parsec.Expr
@@ -9,7 +9,7 @@ import Text.Parsec.Language
 -- import qualified Text.Parsec.Lexer as L
 
 -- Language definition
-def = emptyDef { identStart = letter
+def = emptyDef { identStart = alphaNum
                , identLetter = alphaNum
                , opStart = oneOf "&|>=~∧∨⇒⇔"
                , opLetter = oneOf ""
@@ -21,8 +21,8 @@ def = emptyDef { identStart = letter
 lexer = makeTokenParser def
 
 -- Parsers
-m_parens = Token.parens lexer
-m_reserved = Token.reserved lexer
+m_parens     = Token.parens     lexer
+m_reserved   = Token.reserved   lexer
 m_reservedOp = Token.reservedOp lexer
 m_identifier = Token.identifier lexer
 

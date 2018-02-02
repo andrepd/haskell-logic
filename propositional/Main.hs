@@ -1,24 +1,27 @@
 {-# LANGUAGE ParallelListComp #-}
 
-import PropLogic.Parser
-import PropLogic.AST
+import Parser
+import AST
 
-import Data.Set (Set)
-import Data.Functor
-import Data.List (intercalate, nub, sort)
--- import Data.Either
-import Data.Function ((&))
+import           Data.Set (Set)
+import           Data.Functor
+import           Data.List (intercalate, nub, sort, delete, find)
+-- import           Data.Either
+import           Data.Function ((&))
 import qualified Data.Set as Set
-import Data.Foldable
-import Data.Ord (comparing)
+import qualified Data.Foldable as Foldable
+import           Data.Ord (comparing)
+import           Data.Maybe (fromJust)
 
-import Debug.Trace(trace, traceShow, traceShowId)
--- traceShow _ = id
--- traceShowId = id
+-- import Debug.Trace(trace, traceShow, traceShowId)
+trace     _ = id
+traceShow _ = id
+traceShowId = id
 
 type Valuation = String -> Bool
 
 eval :: Formula -> Valuation -> Bool
+eval f v | trace "eval" False = undefined
 eval f v = case f of
     Val x -> x
     Var x -> v x
@@ -30,33 +33,31 @@ eval f v = case f of
 
 
 
--- instance Functor Formula where
--- unmap :: (String -> String) -> Formula -> Formula
-unmap :: (String -> Formula) -> Formula -> Formula
-unmap func f = case f of
-    -- Var x -> Var (func x)
+-- Applies a function to each variable in a formula
+mapVar :: (String -> Formula) -> Formula -> Formula
+mapVar func f = case f of
+    Val x -> f
     Var x -> func x
-    Not x -> Not (unmap func x)
-    And x y -> And (unmap func x) (unmap func y)
-    Or  x y -> Or  (unmap func x) (unmap func y)
-    Imp x y -> Imp (unmap func x) (unmap func y)
-    Iff x y -> Iff (unmap func x) (unmap func y)
-    _ -> f
+    Not x -> Not (mapVar func x)
+    And x y -> And (mapVar func x) (mapVar func y)
+    Or  x y -> Or  (mapVar func x) (mapVar func y)
+    Imp x y -> Imp (mapVar func x) (mapVar func y)
+    Iff x y -> Iff (mapVar func x) (mapVar func y)
 
--- instance Foldable Formula where
--- binmap :: (a -> b -> b) -> b -> Formula -> b
--- binmap func acc f = traceShow (acc, f) $ case f of
-binmap func acc f = case f of
+-- Folds over variables
+foldVar :: (String -> a -> a) -> a -> Formula -> a
+foldVar func acc f = case f of
     Val x -> acc
     Var x -> func x acc
-    Not x -> binmap func acc x
-    And x y -> binmap func (binmap func acc x) y
-    Or x y -> binmap func (binmap func acc x) y
-    Imp x y -> binmap func (binmap func acc x) y
-    Iff x y -> binmap func (binmap func acc x) y
+    Not x -> foldVar func acc x
+    And x y -> foldVar func (foldVar func acc x) y
+    Or x y -> foldVar func (foldVar func acc x) y
+    Imp x y -> foldVar func (foldVar func acc x) y
+    Iff x y -> foldVar func (foldVar func acc x) y
 
 
 
+-- Prettyprinting
 prettyPrint :: Formula -> String
 prettyPrint f = case f of 
     Val x -> case x of
@@ -101,6 +102,7 @@ truthTable f = let atoms = getAtoms f
 
 -- Generates all possible valuations of a given formula
 possibleValuations :: Formula -> [Valuation]
+-- possibleValuations = map alistToFunc . (traceShowId . possibleValuations') . getAtoms
 possibleValuations = map alistToFunc . possibleValuations' . getAtoms
 
 -- Generates all possible combinations of (identifier,True/False) from a list of identifiers
@@ -115,7 +117,7 @@ possibleResults f vals = map (eval f) vals
 
 -- Gets a list of all (unique) atoms 
 getAtoms :: Formula -> [String]
-getAtoms = sort . nub . binmap (:) []
+getAtoms = sort . nub . foldVar (:) []
 
 
 
@@ -145,53 +147,34 @@ dual f = case f of
 
 -- Simplifies a formula by removing constants and double negation
 simplify :: Formula -> Formula
-simplify f = let
-    simplify' f = case f of
-        Not (Val True) -> Val False
-        Not (Val False) -> Val True
-        Not (Not x) -> x
-        And (Val True) x -> x
-        And x (Val True) -> x
-        And (Val False) x -> Val False
-        And x (Val False) -> Val False
-        Or (Val True) x -> Val True
-        Or x (Val True) -> Val True
-        Or (Val False) x -> x
-        Or x (Val False) -> x
-        _ -> f
-    in case f of
-        Not x -> simplify' $ Not (simplify x)
-        And x y -> simplify' $ And (simplify x) (simplify y)
-        Or  x y -> simplify' $ Or  (simplify x) (simplify y)
-        Imp x y -> simplify' $ Imp (simplify x) (simplify y)
-        Iff x y -> simplify' $ Iff (simplify x) (simplify y)
-        _ -> f
+simplify f = 
+    let simplify' f = case f of
+            Not (Val True) -> Val False
+            Not (Val False) -> Val True
+            Not (Not x) -> x
+            And (Val True) x -> x
+            And x (Val True) -> x
+            And (Val False) x -> Val False
+            And x (Val False) -> Val False
+            Or (Val True) x -> Val True
+            Or x (Val True) -> Val True
+            Or (Val False) x -> x
+            Or x (Val False) -> x
+            _ -> f
+    in  case f of
+            Not x -> simplify' $ Not (simplify x)
+            And x y -> simplify' $ And (simplify x) (simplify y)
+            Or  x y -> simplify' $ Or  (simplify x) (simplify y)
+            Imp x y -> simplify' $ Imp (simplify x) (simplify y)
+            Iff x y -> simplify' $ Iff (simplify x) (simplify y)
+            _ -> f
 
 
 
 -- TODO allow simultaneous substitutions by substituting in first pass x -> y_TEMP and then y_TEMP -> y
 subst :: [String -> Formula] -> Formula -> Formula
 subst [] f = f
-subst (x:xs) f = unmap x (subst xs f)
-
-
-
-positive :: Formula -> Bool
-positive p = case p of
-    Not x -> False
-    x     -> True
-
-negateTerm :: Formula -> Formula
-negateTerm p = case p of
-    Not x -> x
-    x -> Not x
-
--- A literal is a constant or an atom
-literal :: Formula -> Bool
-literal f = case f of
-    Val x -> True
-    Var x -> True
-    _ -> False
+subst (x:xs) f = mapVar x (subst xs f)
 
 
 
@@ -209,7 +192,7 @@ nnf' f = case f of
     _ -> f
 
 -- NNF after simplify
-nnf = nnf' . simplify
+nnf = simplify . nnf' . simplify
 
 -- Negation-Equivalence Normal Form
 nenf' f = case f of
@@ -225,7 +208,7 @@ nenf' f = case f of
     _ -> f
 
 -- NENF after simplify
-nenf = nenf' . simplify
+nenf = simplify . nenf' . simplify
 
 
 
@@ -266,7 +249,28 @@ dnf f = let atoms = getAtoms f
 -- Disjunction Normal Form: set-based approach
 -- A formula in DNF is represented by a set of sets, i.e. {{a,b},{c,d,e}} = (a∧b)∨(c∧d∧e)
 -- Likewise, a formula in CNF is represented by a set of sets, i.e. {{a,b},{c,d,e}} = (a∨b)∧(c∨d∨e)
-type SetNF = Set (Set Formula)
+type Literal = (Bool, String)
+type SetNF = Set (Set Literal)
+
+positive, negative :: Literal -> Bool
+positive = fst
+negative = not . positive
+
+negateLit :: Literal -> Literal
+negateLit (sign, p) = case sign of
+    True -> (False, p)
+    False -> (True, p)
+
+formToLit :: Formula -> Literal
+formToLit f = case f of
+    Var x       -> (True, x)
+    Not (Var x) -> (False, x)
+    _ -> error "Not a literal"
+
+litToForm :: Literal -> Formula
+litToForm (sign, p) = case sign of
+    True -> Var p
+    False -> Not (Var p)
 
 -- Conjuntion of two formulas in DNF as represented by sets 
 distrib :: SetNF -> SetNF -> SetNF
@@ -278,13 +282,15 @@ setdnf = setdnf' . nnf where
     setdnf' f = case f of
         And x y -> distrib (setdnf' x) (setdnf' y)
         Or  x y -> Set.union (setdnf' x) (setdnf' y)
-        _ -> Set.singleton (Set.singleton (f))
+        _ -> Set.singleton (Set.singleton (formToLit f))
+        -- Not x -> Set.singleton (Set.singleton (False, f))
+        -- x     -> Set.singleton (Set.singleton (True, f))
 
 -- Any conjunction with p and ¬p in its terms is trivially ⊥ so it can be removed from the disjunction
 setdnfRemoveTrivial :: SetNF -> SetNF
 setdnfRemoveTrivial s = Set.filter aux s where
     aux s = let (pos,neg) = Set.partition positive s
-            in null $ Set.intersection (pos) (Set.map negateTerm neg)
+            in null $ Set.intersection (pos) (Set.map negateLit neg)
 
 -- If a conjunction is ''a subset of'' another, then in a valuation where the latter is satisfiable the former also is. Therefore we can remove the former from the disjunction
 setdnfRemoveSubsumptions :: SetNF -> SetNF
@@ -294,11 +300,12 @@ setdnfRemoveSubsumptions s = Set.filter aux s where
 -- Set DNF with simplifications
 setdnfSimplify :: Formula -> SetNF
 setdnfSimplify = setdnfRemoveSubsumptions . setdnfRemoveTrivial . setdnf
+-- setdnfSimplify = filter (not . null) . setdnfRemoveSubsumptions . setdnfRemoveTrivial . setdnf
 
 setdnfToFormula :: SetNF -> Formula
 setdnfToFormula f = if null f
     then Val False
-    else setFoldr1 Or $ Set.map (\x -> if null x then Val True else setFoldr1 And x) f
+    else setFoldr1 Or $ Set.map (\x -> if null x then Val True else setFoldr1 And (Set.map litToForm x)) f
     where setFoldr1 f = foldr1 f . Set.elems
 
 -- Alternative definition of DNF from set DNF
@@ -310,7 +317,7 @@ dnf = setdnfToFormula . setdnfSimplify
 -- Conjunction Normal Form
 -- Apply de Morgan's laws to go from DNF to CNF
 setcnf :: Formula -> SetNF
-setcnf f = Set.map (Set.map negateTerm) (setdnf $ Not f)
+setcnf f = Set.map (Set.map negateLit) (setdnf $ Not f)
 
 -- Any disjunction with p and ¬p in its terms is trivially ⊤ so it can be removed from the conjunction
 setcnfRemoveTrivial :: SetNF -> SetNF
@@ -325,7 +332,7 @@ setcnfSimplify = setcnfRemoveSubsumptions . setcnfRemoveTrivial . setcnf
 setcnfToFormula :: SetNF -> Formula
 setcnfToFormula f = if null f
     then Val True
-    else setFoldr1 And $ Set.map (\x -> if null x then Val False else setFoldr1 Or x) f
+    else setFoldr1 And $ Set.map (\x -> if null x then Val False else setFoldr1 Or (Set.map litToForm x)) f
     where setFoldr1 f = foldr1 f . Set.elems
 
 cnf :: Formula -> Formula
@@ -360,22 +367,17 @@ prettyPrintCNF' f = case f of
     Iff x y -> prettyPrintCNF' x ++ " ⇔ " ++ prettyPrintCNF' y
 
 prettyPrintSetDNF :: SetNF -> String
-prettyPrintSetDNF f = intercalate " ∨ " . map (\x -> "("++x++")") . Set.elems $ Set.map (intercalate " ∧ " . Set.elems . (Set.map prettyPrint)) f
-    -- where 
-    --     aux y = case y of
-    --         Var x -> x
-    --         _ -> error "Invalid setDNF"
+prettyPrintSetDNF f = intercalate " ∨ " . map (\x -> "("++x++")") . Set.elems $ Set.map (intercalate " ∧ " . Set.elems . (Set.map aux)) f
+    where aux (sign, name) = (if sign then "" else "¬") ++ name
 
 prettyPrintSetCNF :: SetNF -> String
-prettyPrintSetCNF f = intercalate " ∧ " . map (\x -> "("++x++")") . Set.elems $ Set.map (intercalate " ∨ " . Set.elems . (Set.map prettyPrint)) f
-    -- where 
-    --     aux y = case y of
-    --         Var x -> x
-    --         _ -> error "Invalid setCNF"
+prettyPrintSetCNF f = intercalate " ∧ " . map (\x -> "("++x++")") . Set.elems $ Set.map (intercalate " ∨ " . Set.elems . (Set.map aux)) f
+    where aux (sign, name) = (if sign then "" else "¬") ++ name
 
 
 
--- Definitional CNF
+-- Definitional CNF --
+
 -- Helper function, given a number N yields "p_N" and the next number
 mkPropName :: Int -> (String, Int)
 mkPropName n = ("p_" ++ show n, n+1)
@@ -427,8 +429,6 @@ optdefcnfOr trip@(f, defs, n) = case f of
 
 -- Given the result of a maindefcnf pass, yields the conjunction of f and the definitions in defs (themselves converted to CNF)
 defcnfToFormula :: (Formula, [(Formula, String)], Int) -> Formula
--- defcnfToFormula (f, defs, _) = And f rest
---     where rest = foldr1 And (map cnf (map (\(x,y) -> Iff (Var y) x) defs))
 defcnfToFormula (f, defs, _) = case defs of
     [] -> f
     _  -> And f rest
@@ -459,58 +459,111 @@ setdefcnf f = defcnfToSet $ optdefcnfAnd (nenf f, [], 1)  -- Optimised version
 
 -- DPLL --
 
--- 1-unit rule
-dpll1unit :: SetNF -> SetNF
-dpll1unit f | trace ("1unit " ++ prettyPrintSetCNF f) False = undefined
-dpll1unit f = 
-    let units = Set.filter (\x -> Set.size x == 1) f
-        u = head $ Set.elems $ head $ Set.elems units
-        u' = negateTerm u
-        -- For each unit u, remove instances of -u from each clause
-        f' = Set.map (Set.delete u') f
-        -- For each unit u, remove clauses that contain u
-        f'' = Set.filter (\x -> not $ (u `Set.member` x)) f'
-    in if null units
-           then f
-           else dpll1unit f''
-    
--- Affirmative-negative rule
-dpllAffNeg :: SetNF -> SetNF
-dpllAffNeg f | trace ("affneg " ++ prettyPrintSetCNF f) False = undefined
-dpllAffNeg f = 
-    let lits = Set.unions $ Set.elems f
-        (pos,neg) = Set.partition positive $ lits
-        nonpure = Set.intersection pos (Set.map negateTerm neg)
-        pure = Set.difference pos nonpure
-    in if null pure
-           then f
-           else dpllAffNeg $ Set.filter (\x -> null $ Set.intersection pure x) f 
+-- Helper functions
+setUnions :: Ord a => Set (Set a) -> Set a
+setUnions = Set.foldr Set.union Set.empty
 
--- -- Splitting rule
--- dpllSplit :: SetNF -> SetNF
--- dpllSplit f = 
+setHead :: Ord a => (Set a) -> a
+setHead = fromJust . Foldable.find (const True)  -- Assumes nonempty!
 
-dpll :: SetNF -> Bool
-dpll f | trace ("dpll " ++ prettyPrintSetCNF f) False = undefined
+type DPLLState = (Model, SetNF, Symbols)
+type Model = [DerivedLiteral]
+type Symbols = [String]
+type DerivedLiteral = (Literal, DPLLFlag)
+data DPLLFlag = Guessed | Deduced deriving(Eq, Show)
+
+dpll' :: DPLLState -> Bool
+-- dpll' (model, clauses, symbols) | trace ("dpll " ++ show model) False = undefined
+dpll' (model, clauses, symbols) = 
+    let unassigned = {-# SCC "unassigned" #-} find (`notElem` (map (snd.fst) model')) symbols
+
+        -- Unitpropagation, has to preprocess clauses
+        unitPropagate (m,c) = unitPropagate' (m, update c m) where
+            update c m = Set.map (`Set.difference` assigned')
+                       $ Set.filter (null . (`Set.intersection` assigned)) c where
+                           assigned  = Set.fromList $ map fst m
+                           assigned' = Set.map negateLit assigned
+
+        -- Unit propagation: returns new model and new clauses, for *internal* use only
+        unitPropagate' :: (Model, SetNF) -> (Model, SetNF)
+        -- unitPropagate' (m,c) | trace ("unitprop " ++ show m ++ " / " ++ prettyPrintSetCNF c) False = undefined
+        unitPropagate' (m,c) = {-# SCC "unitPropagate'" #-}
+            let unit = {-# SCC "unit" #-} Foldable.find (\x -> Set.size x == 1) c
+                u = setHead $ fromJust unit
+                u' = negateLit u
+                -- For each unit u, remove clauses that contain u
+                c' = {-# SCC "c_" #-} Set.filter (\x -> not $ (u `Set.member` x)) c
+                -- For each unit u, remove instances of -u from each clause
+                c'' = {-# SCC "c__" #-} Set.map (Set.delete u') c'
+
+                -- Update model
+                m' = (u, Deduced):m
+            in  case unit of
+                    Nothing -> (m, c)
+                    Just _  -> unitPropagate' (m', c'')
+
+        -- Backtrack to latest decision literal
+        backtrack m = {-# SCC "backtrack" #-} trace "back" $ dropWhile (\x -> snd x == Deduced) m
+
+        -- Backjump: simply jump over continuous guesses that also produce a conflict
+        backjump p m = {-# SCC "backjump" #-}
+            case backtrack m of
+                (_, Guessed):xs -> 
+                    let (model'', clauses'') = unitPropagate ((p,Guessed):xs, clauses)
+                    in  if Foldable.any null clauses''
+                            then backjump p xs
+                            else m
+                _ -> m
+
+        -- Unit-propagate to get new model and clauses (clauses is ONLY modified internally)
+        (model', clauses') = unitPropagate (model, clauses)
+
+    in  if Foldable.any null clauses'
+            -- Backtrack if possible, if not say False
+            then case backtrack model of
+                (p, Guessed):xs -> 
+                    dpll' ((negateLit p, Deduced):xs, clauses, symbols)
+                    -- let model'' = backjump p xs
+                    --     declits = {-# SCC "declits" #-} filter (\x -> snd x == Guessed) model''
+                    --     conflict = {-# SCC "conflict" #-} (negateLit p) : map (negateLit.fst) declits
+                    -- in  dpll' ((negateLit p, Deduced):model'', Set.insert (Set.fromList conflict) clauses, symbols)
+                [] -> False
+            -- Case-split
+            else if length model' == length symbols
+                -- If all assigned, say True
+                then True
+                -- Otherwise pick unassigned
+                else let p = fromJust unassigned  --head unassigned
+                     in  dpll' (((True,p), Guessed):model', clauses, symbols)
+
+-- Pure literal elimination: apply only once at the start
+pureLitElim :: SetNF -> SetNF
+pureLitElim f | trace ("purelit " ++ prettyPrintSetCNF f) False = undefined
+pureLitElim f = 
+    let lits = setUnions f
+        (pos,neg) = Set.partition positive lits
+        pos' = Set.map snd pos
+        neg' = Set.map snd neg
+        nonpure = Set.intersection pos' neg'
+        pure = Set.difference (Set.map snd lits) nonpure
+        f' = Set.filter (\x -> null $ Set.intersection pure (Set.map snd x)) f
+    in  if null pure
+            then f
+            else pureLitElim f'
+
+dpll :: Formula -> Bool
 dpll f = 
-    let f' = dpll1unit f  
-        f'' = dpllAffNeg f'
+    let initialstate = ([], f', symbols)
+        f' = pureLitElim $ setdefcnf f
+        symbols = nub $ map snd $ Set.elems $ setUnions f'
+    in  dpll' initialstate
 
-        lits = traceShowId $ Set.filter positive $ Set.unions $ Set.elems f''
-        p = Data.Foldable.maximumBy (comparing (\x -> count x f'')) lits
-
-        count :: Formula -> SetNF -> Int
-        count x f = (Set.size $ Set.filter (x `Set.member`) f) + (Set.size $ Set.filter (negateTerm x `Set.member`) f)
-
-    in if null f || null f' || null f''
-          then True
-          else if any null (Set.elems f) || any null (Set.elems f') || any null (Set.elems f'')
-              then False
-              else dpll (Set.insert (Set.singleton p) f'') || dpll (Set.insert (Set.singleton $ negateTerm p) f'')
-
-satisfiableDPLL, tautologyDPLL :: Formula -> Bool
-satisfiableDPLL = dpll . setdefcnf
+satisfiableDPLL, tautologyDPLL, contradictionDPLL :: Formula -> Bool
+satisfiableDPLL = dpll
 tautologyDPLL = not . satisfiableDPLL . Not
+contradictionDPLL = not . satisfiableDPLL
+
+
 
 ----
 
@@ -526,49 +579,40 @@ main = do
     inp <- getLine
     putLn
     let formula = (extract . parseExp) inp
-    let table = truthTable formula
-    putStrLn table
-
-    putStrLn $ "Tautology     " ++ (boolToSign $ tautology     formula)
-    putStrLn $ "Satisfiable   " ++ (boolToSign $ satisfiable   formula)
-    putStrLn $ "Contradiction " ++ (boolToSign $ contradiction formula)
-    putLn
+    -- let table = truthTable formula
+    -- putStrLn table
 
     let formula_simp = simplify formula
     putStrLn "Simplified form:"
     putStrLn $ prettyPrint formula_simp
-    putStrLn $ if equivalent formula formula_simp then "Equivalent" else "Not equivalent!"
+    -- putStrLn $ if equivalent formula formula_simp then "Equivalent" else "Not equivalent!"
     putLn
 
-    let formula_dnf = dnf formula
+    {-Slet formula_dnf = dnf formula
     putStrLn "DNF form:"
-    -- putStrLn $ prettyPrintDNF $ (nnf) formula
-    -- putStrLn $ prettyPrintDNF $ (setdnfToFormula . setdnf . nnf) formula
-    -- putStrLn $ prettyPrintDNF $ (setdnfToFormula . setdnfRemoveTrivial . setdnf . nnf) formula
-    -- putStrLn $ prettyPrintDNF $ (setdnfToFormula . setdnfRemoveSubsumptions . setdnfRemoveTrivial . setdnf . nnf) formula
     putStrLn $ prettyPrintDNF formula_dnf
-    putStrLn $ if equivalent formula formula_dnf then "Equivalent" else "Not equivalent!"
+    -- putStrLn $ if equivalent formula formula_dnf then "Equivalent" else "Not equivalent!"
     putLn
 
     let formula_cnf = cnf formula
     putStrLn "CNF form:"
     putStrLn $ prettyPrintCNF formula_cnf
-    putStrLn $ if equivalent formula formula_cnf then "Equivalent" else "Not equivalent!"
+    -- putStrLn $ if equivalent formula formula_cnf then "Equivalent" else "Not equivalent!"
     putLn
 
     let formula_nenf = nenf formula
     putStrLn "NENF"
     putStrLn $ prettyPrint formula_nenf
-    putStrLn $ if equivalent formula formula_nenf then "Equivalent" else "Not equivalent!"
-    putLn
+    -- putStrLn $ if equivalent formula formula_nenf then "Equivalent" else "Not equivalent!"
+    putLn-}
 
     let formula_dcnf = defcnf formula
-    putStrLn "Definitional CNF (optimised)"
+    putStrLn "Definitional CNF (optimised; equisatisfiable, not equivalent)"
     putStrLn $ prettyPrintCNF $ formula_dcnf
-    -- putStrLn $ prettyPrintCNF $ setcnfToFormula $ setdefcnf formula
-    -- putStrLn $ show $ setdefcnf formula
     -- putStrLn $ if equivalent formula formula_dcnf then "Equivalent" else "Not equivalent!"
     putLn
 
-    putStrLn $ "Satisfiable: " ++ (show $ satisfiableDPLL formula)
-
+    -- putStrLn $ "Tautology     " ++ (boolToSign $ tautologyDPLL     formula)
+    putStrLn $ "Satisfiable   " ++ (boolToSign $ satisfiableDPLL   formula)
+    -- putStrLn $ "Contradiction " ++ (boolToSign $ contradictionDPLL formula)
+    putLn
