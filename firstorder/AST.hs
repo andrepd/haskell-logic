@@ -1,4 +1,4 @@
-module FOL.AST where
+module AST where
 
 data Formula = Val Bool             -- Constant True/False
              | Atm Pred             -- Predicate

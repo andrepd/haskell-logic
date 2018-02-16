@@ -1,7 +1,7 @@
 {-# LANGUAGE ParallelListComp #-}
 
-import FOL.Parser
-import FOL.AST
+import Parser
+import AST
 
 import Data.Set (Set)
 import Data.Functor
@@ -68,39 +68,17 @@ prettyPrint f = case f of
 
 
 
--- subst :: String -> String -> Formula -> Formula
--- subst a b f = case f of
---     Atm x -> substPred x
---     Not x -> Not (subst a b x)
---     And x y -> And (subst a b x) (subst a b y)
---     Or  x y -> Or  (subst a b x) (subst a b y)
---     Imp x y -> Imp (subst a b x) (subst a b y)
---     Iff x y -> Iff (subst a b x) (subst a b y)
---     _ -> f
---     where 
---         substPred p = case p of
---             Pred name terms -> Pred name (map substTerm terms)
---         substTerm t = case t of
---             Var x -> Var $ func x
---             Func name terms -> Func name (map substTerm terms)
---         func s = if a == b then b else s
+-- Return a valuation just like v except it yields b instead of v a
+substInVal :: String -> obj -> Valuation obj -> Valuation obj
+substInVal a b v x = if x == a then b else v x
 
--- subst :: String -> String -> Valuation obj -> Valuation obj
--- subst a b v x = if x == a then v b else v x
-
-subst :: String -> obj -> Valuation obj -> Valuation obj
-subst a b v x = if x == a then b else v x
-
--- subst :: String -> String -> Formula -> Formula
--- subst a b f = unmap func f where 
---     func x | x == a    = Var b 
---            | otherwise = x
-
+-- Value of a term in a given interpretation and valuation
 termval :: Interpretation obj -> Valuation obj -> Term -> obj
 termval m@(domain, funcInterp, predInterp) v f = case f of
     Var x -> v x
     Func name args -> func (map (termval m v) args) where func = funcInterp name
 
+-- Checks if a formula holds in a given valuation and interpretation
 holds :: Interpretation obj -> Valuation obj -> Formula -> Bool
 holds m@(domain, funcInterp, predInterp) v f = case f of
     Val x -> x
@@ -110,8 +88,12 @@ holds m@(domain, funcInterp, predInterp) v f = case f of
     Or  x y -> (holds m v x) || (holds m v y)
     Imp x y -> not (holds m v x) || (holds m v y)
     Iff x y -> (holds m v x) == (holds m v y)
-    Forall x p -> all (\a -> holds m (subst x a v) p) domain
-    Exists x p -> any (\a -> holds m (subst x a v) p) domain
+    Forall x p -> all (\a -> holds m (substInVal x a v) p) domain
+    Exists x p -> any (\a -> holds m (substInVal x a v) p) domain
+
+
+
+
 
 ----
 
@@ -150,16 +132,27 @@ modNInterp n =
 
 
 main = do
-    -- inp <- getLine
-    -- putLn
-    -- let formula = (extract . parseExp) inp
-    -- putStrLn $ show $ formula
+{-    inp <- getLine
+    putLn
+    let formula = (extract . parseExp) inp
+    putStrLn $ show $ formula
+    putStrLn $ prettyPrint $ formula-}
 
-    let formula1 = (extract . parseExp) "@x . eq(x,0()) | eq(x,1())"
+    let formula1 = (extract . parseExp) "@x . eq(x,0) | eq(x,1)"
+    -- putStrLn $ show formula1
+    putStrLn $ prettyPrint formula1
     putStrLn $ show $ holds boolInterp undefined formula1
     putStrLn $ show $ holds (modNInterp 2) undefined formula1
     putStrLn $ show $ holds (modNInterp 3) undefined formula1
     putLn
 
-    let formula2 = (extract . parseExp) "@x. ~eq(x,0()) => \\y. eq(times(x,y),1())"
-    putStrLn $ show $ filter (\n -> holds (modNInterp n) undefined formula2) [1..50]
+    let formula2 = (extract . parseExp) "@x. ~eq(x,0) => \\y. eq(times(x,y),1)"
+    -- let formula2 = (extract . parseExp) "@x. ~(x=0) => \\y. x*y = 1"
+    -- putStrLn $ show formula2
+    putStrLn $ prettyPrint formula2
+    putStrLn $ show $ filter (\n -> holds (modNInterp n) undefined formula2) [1..100]
+
+    -- let formula3 = getLine >>= (extract . parseExp)
+    inp <- getLine
+    let formula3 = (extract . parseExp) inp
+    putStrLn $ show formula3

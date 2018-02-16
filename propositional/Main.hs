@@ -1,4 +1,5 @@
 {-# LANGUAGE ParallelListComp #-}
+{-# LANGUAGE NamedFieldPuns #-}
 
 import Parser
 import AST
@@ -249,17 +250,21 @@ dnf f = let atoms = getAtoms f
 -- Disjunction Normal Form: set-based approach
 -- A formula in DNF is represented by a set of sets, i.e. {{a,b},{c,d,e}} = (a∧b)∨(c∧d∧e)
 -- Likewise, a formula in CNF is represented by a set of sets, i.e. {{a,b},{c,d,e}} = (a∨b)∧(c∨d∨e)
+-- type Literal = (Bool, String)
 type Literal = (Bool, String)
+sign = fst
+name = snd
+-- data Literal = Literal { sign::Bool, name::String }  deriving(Eq, Ord, Show)
 type SetNF = Set (Set Literal)
 
 positive, negative :: Literal -> Bool
-positive = fst
+positive = sign
 negative = not . positive
 
 negateLit :: Literal -> Literal
-negateLit (sign, p) = case sign of
-    True -> (False, p)
-    False -> (True, p)
+negateLit (sign, name) = case sign of
+    True -> (False, name)
+    False -> (True, name)
 
 formToLit :: Formula -> Literal
 formToLit f = case f of
@@ -268,9 +273,9 @@ formToLit f = case f of
     _ -> error "Not a literal"
 
 litToForm :: Literal -> Formula
-litToForm (sign, p) = case sign of
-    True -> Var p
-    False -> Not (Var p)
+litToForm (sign, name) = case sign of
+    True -> Var name
+    False -> Not (Var name)
 
 -- Conjuntion of two formulas in DNF as represented by sets 
 distrib :: SetNF -> SetNF -> SetNF
@@ -355,16 +360,16 @@ prettyPrintDNF f = "(" ++ prettyPrintDNF' f ++ ")" where
 
 prettyPrintCNF :: Formula -> String
 prettyPrintCNF f = "(" ++ prettyPrintCNF' f ++ ")" where
-prettyPrintCNF' f = case f of 
-    Val x -> case x of
-        True -> "⊤"
-        False -> "⊥"
-    Var x -> x
-    Not x -> "¬" ++ prettyPrintCNF' x
-    And x y -> prettyPrintCNF' x ++ ") ∧ (" ++ prettyPrintCNF' y
-    Or x y -> prettyPrintCNF' x ++ " ∨ " ++ prettyPrintCNF' y
-    Imp x y -> prettyPrintCNF' x ++ " ⇒ " ++ prettyPrintCNF' y
-    Iff x y -> prettyPrintCNF' x ++ " ⇔ " ++ prettyPrintCNF' y
+    prettyPrintCNF' f = case f of 
+        Val x -> case x of
+            True -> "⊤"
+            False -> "⊥"
+        Var x -> x
+        Not x -> "¬" ++ prettyPrintCNF' x
+        And x y -> prettyPrintCNF' x ++ ") ∧ (" ++ prettyPrintCNF' y
+        Or x y -> prettyPrintCNF' x ++ " ∨ " ++ prettyPrintCNF' y
+        Imp x y -> prettyPrintCNF' x ++ " ⇒ " ++ prettyPrintCNF' y
+        Iff x y -> prettyPrintCNF' x ++ " ⇔ " ++ prettyPrintCNF' y
 
 prettyPrintSetDNF :: SetNF -> String
 prettyPrintSetDNF f = intercalate " ∨ " . map (\x -> "("++x++")") . Set.elems $ Set.map (intercalate " ∧ " . Set.elems . (Set.map aux)) f
@@ -467,21 +472,25 @@ setHead :: Ord a => (Set a) -> a
 setHead = fromJust . Foldable.find (const True)  -- Assumes nonempty!
 
 type DPLLState = (Model, SetNF, Symbols)
+-- data DPLLState = DPLLState { model::Model, clauses::SetNF, symbols::Symbols }  deriving(Eq, Show)
 type Model = [DerivedLiteral]
 type Symbols = [String]
 type DerivedLiteral = (Literal, DPLLFlag)
+lit = fst
+flag = snd
+-- data DerivedLiteral = DerivedLiteral { lit::Literal, flag::DPLLFlag }  deriving(Eq, Show)
 data DPLLFlag = Guessed | Deduced deriving(Eq, Show)
 
 dpll' :: DPLLState -> Bool
 -- dpll' (model, clauses, symbols) | trace ("dpll " ++ show model) False = undefined
 dpll' (model, clauses, symbols) = 
-    let unassigned = {-# SCC "unassigned" #-} find (`notElem` (map (snd.fst) model')) symbols
+    let unassigned = {-# SCC "unassigned" #-} find (`notElem` (map (name.lit) model')) symbols
 
         -- Unitpropagation, has to preprocess clauses
         unitPropagate (m,c) = unitPropagate' (m, update c m) where
             update c m = Set.map (`Set.difference` assigned')
                        $ Set.filter (null . (`Set.intersection` assigned)) c where
-                           assigned  = Set.fromList $ map fst m
+                           assigned  = Set.fromList $ map lit m
                            assigned' = Set.map negateLit assigned
 
         -- Unit propagation: returns new model and new clauses, for *internal* use only
@@ -503,7 +512,7 @@ dpll' (model, clauses, symbols) =
                     Just _  -> unitPropagate' (m', c'')
 
         -- Backtrack to latest decision literal
-        backtrack m = {-# SCC "backtrack" #-} trace "back" $ dropWhile (\x -> snd x == Deduced) m
+        backtrack m = {-# SCC "backtrack" #-} trace "back" $ dropWhile (\x -> flag x == Deduced) m
 
         -- Backjump: simply jump over continuous guesses that also produce a conflict
         backjump p m = {-# SCC "backjump" #-}
@@ -524,8 +533,8 @@ dpll' (model, clauses, symbols) =
                 (p, Guessed):xs -> 
                     dpll' ((negateLit p, Deduced):xs, clauses, symbols)
                     -- let model'' = backjump p xs
-                    --     declits = {-# SCC "declits" #-} filter (\x -> snd x == Guessed) model''
-                    --     conflict = {-# SCC "conflict" #-} (negateLit p) : map (negateLit.fst) declits
+                    --     declits = {-# SCC "declits" #-} filter (\x -> flag x == Guessed) model''
+                    --     conflict = {-# SCC "conflict" #-} (negateLit p) : map (negateLit.lit) declits
                     -- in  dpll' ((negateLit p, Deduced):model'', Set.insert (Set.fromList conflict) clauses, symbols)
                 [] -> False
             -- Case-split
@@ -538,15 +547,15 @@ dpll' (model, clauses, symbols) =
 
 -- Pure literal elimination: apply only once at the start
 pureLitElim :: SetNF -> SetNF
-pureLitElim f | trace ("purelit " ++ prettyPrintSetCNF f) False = undefined
+-- pureLitElim f | trace ("purelit " ++ prettyPrintSetCNF f) False = undefined
 pureLitElim f = 
     let lits = setUnions f
         (pos,neg) = Set.partition positive lits
-        pos' = Set.map snd pos
-        neg' = Set.map snd neg
+        pos' = Set.map name pos
+        neg' = Set.map name neg
         nonpure = Set.intersection pos' neg'
-        pure = Set.difference (Set.map snd lits) nonpure
-        f' = Set.filter (\x -> null $ Set.intersection pure (Set.map snd x)) f
+        pure = Set.difference (Set.map name lits) nonpure
+        f' = Set.filter (\x -> null $ Set.intersection pure (Set.map name x)) f
     in  if null pure
             then f
             else pureLitElim f'
@@ -555,7 +564,7 @@ dpll :: Formula -> Bool
 dpll f = 
     let initialstate = ([], f', symbols)
         f' = pureLitElim $ setdefcnf f
-        symbols = nub $ map snd $ Set.elems $ setUnions f'
+        symbols = nub $ map name $ Set.elems $ setUnions f'
     in  dpll' initialstate
 
 satisfiableDPLL, tautologyDPLL, contradictionDPLL :: Formula -> Bool
