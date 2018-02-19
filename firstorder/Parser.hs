@@ -16,8 +16,6 @@ e_def = emptyDef { identStart = letter
                  , identLetter = alphaNum <|> char '\''
                  , opStart = oneOf "&|>=~∧∨⇒⇔"
                  , opLetter = oneOf ">="
-                 -- , opStart = oneOf  ":!#$%&*+/<=>?^|-~∧∨⇒⇔"
-                 -- , opLetter = oneOf ":!#$%&*+/<=>?^|-~"
                  , reservedOpNames = ["&", "|", "=>", "==", "~", "∧", "∨", "⇒", "⇔"]
                  , reservedNames = ["T","F"]
                  }
@@ -32,8 +30,7 @@ e_reservedOp = Token.reservedOp e_lexer
 e_identifier = Token.identifier e_lexer
 e_commaSep   = Token.commaSep   e_lexer
 e_lexeme     = Token.lexeme     e_lexer
-e_operator   = Token.operator   e_lexer
-e_natural    = Token.natural    e_lexer
+e_whiteSpace = Token.whiteSpace e_lexer
 
 -- Formula parser
 expr :: Parser Formula
@@ -41,17 +38,15 @@ expr = buildExpressionParser e_table form
 
 form = e_parens expr <|> literalTerm <|> quantifier <|> predicate <?> "Error form"
 
-literalTerm = (e_reserved "T" >> return (Val True) )
-          <|> (e_reserved "F" >> return (Val False))
-          <|> (e_reserved "⊤" >> return (Val True) )
-          <|> (e_reserved "⊥" >> return (Val False))
+literalTerm = (e_reserved "T" >> (return $ Val True ))
+          <|> (e_reserved "F" >> (return $ Val False))
+          <|> (e_reserved "⊤" >> (return $ Val True ))
+          <|> (e_reserved "⊥" >> (return $ Val False))
           <?> "Error literalTerm"
 
-quantifier = do { (e_lexeme . oneOf) "@∀";  vars <- many e_identifier; (e_lexeme . char) '.'; form <- expr; return $ foldr Forall form vars } 
+quantifier = do { (e_lexeme . oneOf) "@ ∀"; vars <- many e_identifier; (e_lexeme . char) '.'; form <- expr; return $ foldr Forall form vars } 
          <|> do { (e_lexeme . oneOf) "\\∃"; vars <- many e_identifier; (e_lexeme . char) '.'; form <- expr; return $ foldr Exists form vars }
          <?> "Error quantifier"
-
--- atom = Atm <$> predicate <?> "Error atom"
 
 -- Operator table, from highest to lowest priority
 e_table = [ [ e_prefix "~" Not, e_prefix "¬" Not ]
@@ -68,53 +63,76 @@ e_postfix name fun = Postfix $ e_reservedOp name >> return fun
 
 
 -- Relations/Functions --
--- Operator table, from highest to lowest priority
--- f_table = [ [ f_prefix "-" Not, f_prefix "+" Not ]
---           , [ f_binary "&"  And AssocLeft, f_binary "∧" And AssocLeft ]
---           , [ f_binary "|"  Or  AssocLeft, f_binary "∨" Or  AssocLeft ]
---           , [ f_binary "=>" Imp AssocLeft, f_binary "⇒" Imp AssocLeft ]
---           , [ f_binary "==" Iff AssocLeft, f_binary "⇔" Iff AssocLeft ]
---           ]
-
--- e_binary  name fun = Infix   $ e_operator name >> return fun
--- e_prefix  name fun = Prefix  $ e_operator name >> return fun
--- e_postfix name fun = Postfix $ e_operator name >> return fun
-
 
 -- Predicate parser
 predicate :: Parser Formula
-predicate = try (do
-                ident <- e_identifier
-                terms <- e_parens (e_commaSep term)
-                return $ Pred ident terms
-                ) 
-        <|> (do
-            ident <- e_identifier
-            return $ Pred ident []
-            )
-    <?> "Error predicate"
+-- predicate = buildExpressionParser (f_table Pred) predicate'
+predicate = predicate'
+
+-- predicate' :: Parser Formula
+predicate' = try funcPredicate <|> constPredicate <?> "Error predicate"
+
+funcPredicate = do
+    ident <- e_identifier
+    terms <- e_parens (e_commaSep term)
+    return $ Pred ident terms
+
+constPredicate = do
+    ident <- e_identifier
+    return $ Pred ident []            
 
 
 
 -- Term parser
+t_def = emptyDef { identStart = letter  -- <|> oneOf "+-*/*"
+                 , identLetter = alphaNum <|> oneOf "\'_"
+                 , opStart = oneOf  ":!#$%&*+/<=>?^|-~"
+                 , opLetter = oneOf ":!#$%&*+/<=>?^|-~"
+                 , reservedOpNames = ["-", "+", "^", "*", "/"]
+                 }
+
+-- Lexer based on that definition
+t_lexer = makeTokenParser t_def
+
+-- Elementary parsers
+t_parens     = Token.parens     t_lexer
+t_reservedOp = Token.reservedOp t_lexer
+t_identifier = Token.identifier t_lexer
+t_commaSep   = Token.commaSep   t_lexer
+t_natural    = Token.natural    t_lexer
+
+-- Operator table, from highest to lowest priority
+t_table = [ [ t_prefix "-", t_prefix "+" ]
+          , [ t_binary "^" AssocLeft ]
+          , [ t_binary "*" AssocLeft, t_binary "/"  AssocLeft ]
+          , [ t_binary "+" AssocLeft, t_binary "-"  AssocLeft ]
+          , [ t_binary "=" AssocLeft, t_binary "/=" AssocLeft ]
+          -- , [ t_binary "<" AssocLeft, t_binary ">"  AssocLeft, t_binary "<=" AssocLeft, t_binary "<=" AssocLeft ]
+          ]
+
+t_binary  name = Infix   $ t_reservedOp name >> return (\x y -> Func name [x,y])
+t_prefix  name = Prefix  $ t_reservedOp name >> return (\x   -> Func name [x]  )
+t_postfix name = Postfix $ t_reservedOp name >> return (\x   -> Func name [x]  )
+
+
+
 term :: Parser Term
-term = try function
-   <|> variable
-   <?> "Error term"
+term = buildExpressionParser t_table term'
+-- term = naturalTerm <|> try funcTerm <|> variable <?> "Error term"
+
+term' = t_parens term <|> naturalTerm <|> try funcTerm <|> variable <?> "Error term"
 
 variable = Var <$> e_identifier <?> "Error variable"
 
-function = Parser.natural
-       <|> (do
-           ident <- e_identifier
-           terms <- e_parens (e_commaSep term)
-           return $ Func ident terms
-           )
-       <?> "Error function"
+funcTerm = do
+    ident <- t_identifier
+    terms <- t_parens (t_commaSep term)
+    return $ Func ident terms
+    -- <?> "Error funcTerm"
 
 -- Integer numbers are interpreted as 0-ary functions (constants) so you don't have to type 123() 
-natural = do
-    ident <- e_natural
+naturalTerm = do
+    ident <- t_natural
     return $ Func (show ident) []
     
 

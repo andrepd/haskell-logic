@@ -7,6 +7,7 @@ import Data.List (intercalate, nub, sort)
 import Data.Function ((&))
 import Data.Maybe (fromJust)
 import Data.List (find, delete)
+import Data.Char (isAlphaNum, isDigit)
 
 import Debug.Trace(trace, traceShow, traceShowId)
 -- trace _     = id
@@ -38,24 +39,19 @@ prettyPrint f = case f of
     prettyPrintTerm :: Term -> String
     prettyPrintTerm x = case x of
         Var x -> x
-        Func name terms -> name ++ "(" ++ intercalate "," (map prettyPrintTerm terms) ++ ")"    
+        -- Func name terms -> name ++ "(" ++ intercalate "," (map prettyPrintTerm terms) ++ ")"
+        Func name terms | all isDigit name -> name  -- Digit
+                        | all isIdent name -> name ++ "(" ++ intercalate "," (map prettyPrintTerm terms) ++ ")"  -- f(x,y) notation
+                        | otherwise        -> "(" ++ intercalate name (map prettyPrintTerm terms) ++ ")"  -- Infix (x⋆y) notation
+      where
+        isIdent c = (isAlphaNum c) || (c=='\'') || (c=='_')
     -- collapse :: (a -> b -> c) -> a -> b -> [a]
     -- collapse func x y = case y of
     --     func z w -> x : collapse func z w
     --     _ -> [x]
     -- -- And x (And y (Val True))
 
-
-
--- Helper function
--- alternative :: (Eq a) => a -> a -> (a -> a)
--- alternative a b x | x == a    = b
---                   | otherwise = x
-
--- (|=>) :: (Eq a) => a -> a -> (a -> a)
--- (|=>) a b x | x == a    = b
---             | otherwise = x
-
+-- Helper functions
 -- Returns a total function (String -> Term) that maps a to b and is the identity for all other inputs
 -- (|=>) :: String -> Term -> (String -> Term)
 -- (|=>) a b x | x == a    = b
@@ -66,16 +62,14 @@ prettyPrint f = case f of
 -- (|->) a b f x | x == a    = b
               -- | otherwise = f x
 
+-- "Amends" a function such that it now maps a to b (and keeps all other inputs x mapped to f x)
 (|->) :: (Eq a) => a -> b -> (a -> b) -> (a -> b)
 (|->) a b f x | x == a    = b
               | otherwise = f x
 
+-- Returns a total function (String -> Term) that maps a to b and is the identity for all other inputs
 (|=>) :: String -> Term -> (String -> Term)
 (|=>) a b = (|->) a b Var
-
--- Return a valuation just like v except it yields b instead of v a
--- substVal :: String -> a -> Valuation a -> Valuation a
--- substVal a b v x = if x /= a then v x else b
 
 -- Value of a term in a given interpretation and valuation
 termval :: Interpretation a -> Valuation a -> Term -> a
@@ -93,8 +87,6 @@ holds m@(domain, funcInterp, predInterp) v f = case f of
     Or  x y -> (holds m v x) || (holds m v y)
     Imp x y -> not (holds m v x) || (holds m v y)
     Iff x y -> (holds m v x) == (holds m v y)
-    -- Forall x p -> all (\a -> holds m (substVal x a v) p) domain
-    -- Exists x p -> any (\a -> holds m (substVal x a v) p) domain
     Forall x p -> all (\a -> holds m ((x |-> a) v) p) domain
     Exists x p -> any (\a -> holds m ((x |-> a) v) p) domain
 
@@ -330,8 +322,8 @@ boolInterp =
     let dom = [True,False]
         func "0" [] = False
         func "1" [] = True
-        func "plus"  [x,y] = not $ x == y
-        func "times" [x,y] = x && y
+        func "+"  [x,y] = not $ x == y
+        func "*" [x,y] = x && y
         func _ _ = error "Bad function"
         pred "eq" [x,y] = x == y
         pred _ _ = error "Bad predicate"
@@ -342,8 +334,8 @@ modNInterp n =
     let dom = [0..n-1]
         func "0" [] = 0 `mod` n
         func "1" [] = 1 `mod` n
-        func "plus"  [x,y] = (x+y) `mod` n
-        func "times" [x,y] = (x*y) `mod` n
+        func "+"  [x,y] = (x+y) `mod` n
+        func "*" [x,y] = (x*y) `mod` n
         func _ _ = error "Bad function"
         pred "eq" [x,y] = x == y
         pred _ _ = error "Bad predicate"
@@ -369,8 +361,9 @@ main = do
     -- putStrLn $ show $ freshVar formula1
     putLn
 
-    let formula2 = (extract . parseExp) "@x. ~eq(x,0) => \\y. eq(times(x,y),1)"
+    -- let formula2 = (extract . parseExp) "@x. ~eq(x,0) => \\y. eq(times(x,y),1)"
     -- let formula2 = (extract . parseExp) "@x. ~(x=0) => \\y. x*y = 1"
+    let formula2 = (extract . parseExp) "@x. ~eq(x,0) => \\y. eq(x*y , 1)"
     -- putStrLn $ show formula2
     putStrLn $ prettyPrint formula2
     putStrLn $ show $ filter (\n -> holds (modNInterp n) undefined formula2) [1..100]
@@ -381,27 +374,29 @@ main = do
     -- let formula = getLine >>= (extract . parseExp)
     inp <- getLine
     let formula = (extract . parseExp) inp
+    putStr "AST:            "
     putStrLn $ show formula
+    putStr "Prettyprint:    "
     putStrLn $ prettyPrint formula
     -- putStrLn $ prettyPrint $ subst "x" (Var "y") formula
-    putStr "Variables: "
+    putStr "Variables:      "
     putStrLn $ show $ vars formula
     putStr "Free variables: "
     putStrLn $ show $ freeVars formula
     -- putStrLn $ show $ freshVar formula
-    putStr "Univ. Closure: "
+    putStr "Univ. Closure:  "
     putStrLn $ prettyPrint $ universalClosure formula
     -- putStrLn $ prettyPrint $ subst (\x -> if x=="x" then Var "y" else Var x) formula
-    -- putStr "Subst x->y: "
+    -- putStr "Subst x->y:  "
     -- putStrLn $ prettyPrint $ subst ("x" |=> Var "y") formula
-    putStr "Simplified: "
+    putStr "Simplified:     "
     putStrLn $ prettyPrint $ simplify formula
     -- putStrLn $ show $ simplify formula
-    putStr "NNF: "
+    putStr "NNF:            "
     putStrLn $ prettyPrint $ nnf formula
-    putStr "PNF: "
+    putStr "PNF:            "
     putStrLn $ prettyPrint $ pnf formula
-    putStr "Funcs: "
+    putStr "Funcs:          "
     putStrLn $ show $ funcs formula
-    putStr "Skolemization: "
+    putStr "Skolemization:  "
     putStrLn $ prettyPrint $ skolem formula
