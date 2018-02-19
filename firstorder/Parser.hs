@@ -67,7 +67,20 @@ e_postfix name fun = Postfix $ e_reservedOp name >> return fun
 -- Predicate parser
 predicate :: Parser Formula
 -- predicate = buildExpressionParser (f_table Pred) predicate'
-predicate = predicate'
+predicate = try rel <|> predicate'
+
+-- Infix notation for relations
+rel = do
+    term1 <- term
+    op <- choice $ map (try . string) ["<=", ">=", "<", ">", "=", "/=", "≤", "≥", "≠"]
+    term2 <- term
+    return $ Pred (opTranslationTable op) [term1, term2]
+
+-- Translates operators to synonyms
+opTranslationTable op | op `elem` ["<=", "≤"] = "≤"
+                      | op `elem` [">=", "≥"] = "≥"
+                      | op `elem` ["/=", "≠"] = "≠"
+                      | otherwise = op
 
 -- predicate' :: Parser Formula
 predicate' = try funcPredicate <|> constPredicate <?> "Error predicate"
@@ -106,7 +119,7 @@ t_table = [ [ t_prefix "-", t_prefix "+" ]
           , [ t_binary "^" AssocLeft ]
           , [ t_binary "*" AssocLeft, t_binary "/"  AssocLeft ]
           , [ t_binary "+" AssocLeft, t_binary "-"  AssocLeft ]
-          , [ t_binary "=" AssocLeft, t_binary "/=" AssocLeft ]
+          -- , [ t_binary "=" AssocLeft, t_binary "/=" AssocLeft ]
           -- , [ t_binary "<" AssocLeft, t_binary ">"  AssocLeft, t_binary "<=" AssocLeft, t_binary "<=" AssocLeft ]
           ]
 

@@ -25,7 +25,9 @@ prettyPrint f = case f of
     Val x -> case x of
         True -> "⊤"
         False -> "⊥"
-    Pred name terms -> name ++ "(" ++ intercalate "," (map prettyPrintTerm terms) ++ ")"    
+    -- Pred name args -> name ++ "(" ++ intercalate "," (map prettyPrintTerm args) ++ ")"    
+    Pred name args | all isIdent name -> name ++ "(" ++ intercalate "," (map prettyPrintTerm args) ++ ")"  -- R(x1,...,xN) notation
+                    | otherwise        -> "(" ++ intercalate name (map prettyPrintTerm args) ++ ")"  -- Infix notation
     Not x -> "¬" ++ prettyPrint x
     And x y -> "(" ++ prettyPrint x ++ " ∧ " ++ prettyPrint y ++ ")"
     Or x y -> "(" ++ prettyPrint x ++ " ∨ " ++ prettyPrint y ++ ")"
@@ -39,12 +41,11 @@ prettyPrint f = case f of
     prettyPrintTerm :: Term -> String
     prettyPrintTerm x = case x of
         Var x -> x
-        -- Func name terms -> name ++ "(" ++ intercalate "," (map prettyPrintTerm terms) ++ ")"
-        Func name terms | all isDigit name -> name  -- Digit
-                        | all isIdent name -> name ++ "(" ++ intercalate "," (map prettyPrintTerm terms) ++ ")"  -- f(x,y) notation
-                        | otherwise        -> "(" ++ intercalate name (map prettyPrintTerm terms) ++ ")"  -- Infix (x⋆y) notation
-      where
-        isIdent c = (isAlphaNum c) || (c=='\'') || (c=='_')
+        -- Func name args -> name ++ "(" ++ intercalate "," (map prettyPrintTerm args) ++ ")"
+        Func name args | all isDigit name -> name  -- Digit
+                        | all isIdent name -> name ++ "(" ++ intercalate "," (map prettyPrintTerm args) ++ ")"  -- f(x,y) notation
+                        | otherwise        -> "(" ++ intercalate name (map prettyPrintTerm args) ++ ")"  -- Infix (x⋆y) notation
+    isIdent c = (isAlphaNum c) || (c=='\'') || (c=='_')
     -- collapse :: (a -> b -> c) -> a -> b -> [a]
     -- collapse func x y = case y of
     --     func z w -> x : collapse func z w
