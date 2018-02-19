@@ -9,6 +9,7 @@ import Data.Maybe (fromJust)
 import Data.List (find, delete)
 
 import Debug.Trace(trace, traceShow, traceShowId)
+-- trace _     = id
 -- traceShow _ = id
 -- traceShowId = id
 
@@ -29,6 +30,8 @@ prettyPrint f = case f of
     Or x y -> "(" ++ prettyPrint x ++ " ∨ " ++ prettyPrint y ++ ")"
     Imp x y -> "(" ++ prettyPrint x ++ " ⇒ " ++ prettyPrint y ++ ")"
     Iff x y -> "(" ++ prettyPrint x ++ " ⇔ " ++ prettyPrint y ++ ")"
+    -- Forall x (Forall y p) -> "(∀" ++ x ++ ". " ++ prettyPrint p ++ ")"
+    -- Exists x (Forall y p) -> "(∃" ++ x ++ ". " ++ prettyPrint p ++ ")"
     Forall x p -> "(∀" ++ x ++ ". " ++ prettyPrint p ++ ")"
     Exists x p -> "(∃" ++ x ++ ". " ++ prettyPrint p ++ ")"
   where
@@ -36,6 +39,11 @@ prettyPrint f = case f of
     prettyPrintTerm x = case x of
         Var x -> x
         Func name terms -> name ++ "(" ++ intercalate "," (map prettyPrintTerm terms) ++ ")"    
+    -- collapse :: (a -> b -> c) -> a -> b -> [a]
+    -- collapse func x y = case y of
+    --     func z w -> x : collapse func z w
+    --     _ -> [x]
+    -- -- And x (And y (Val True))
 
 
 
@@ -92,7 +100,7 @@ holds m@(domain, funcInterp, predInterp) v f = case f of
 
 -- Substitute variable a for b in f
 subst :: (String -> Term) -> Formula -> Formula
-subst s f | trace ("subst " ++ show f) False = undefined
+-- subst s f | trace ("subst " ++ show f) False = undefined
 subst s f = case f of
     Val _ -> f
     Pred name args -> Pred name $ map (substInTerm s) args
@@ -102,10 +110,10 @@ subst s f = case f of
     Imp x y -> subst s x `Imp` subst s y
     Iff x y -> subst s x `Iff` subst s y
     Forall x p -> if s x /= Var x
-        then error "Cannot replace bound variable"
+        then error "Cannot substitute bound variable"
         else if needsRename x p then Forall x' (subst ((x |-> Var x') s) p) else Forall x (subst s p) where x' = variant x $ x : freeVars f
     Exists x p -> if s x /= Var x
-        then error "Cannot replace bound variable"
+        then error "Cannot substitute bound variable"
         else if needsRename x p then Exists x' (subst ((x |-> Var x') s) p) else Exists x (subst s p) where x' = variant x $ x : freeVars f
   where
     substInTerm :: (String -> Term) -> Term -> Term
@@ -113,7 +121,7 @@ subst s f = case f of
         Var x -> s x
         Func name args -> Func name (map (substInTerm s) args)
     -- Checks if a bound variable needs renaming (if a substitution would cause a variable to be captured by a quantifier, then we need to "alpha-convert" to avoid the clash)
-    needsRename x p = traceShowId $ any (\y -> x `elem` (varsTerm $ s y)) (traceShowId $ freeVars $ Forall x p)
+    needsRename x p = any (\y -> x `elem` (varsTerm $ s y)) (freeVars $ Forall x p)
 
 -- List of variables in formula
 vars :: Formula -> [String]
@@ -158,11 +166,6 @@ isOpen = not . isClosed
 isGround = null . vars
 
 -- Universal closure
--- universalClosure :: Formula -> Formula
--- universalClosure f =
---     let v = freeVars f
---     in  foldr Forall f v
-    
 universalClosure :: Formula -> Formula
 universalClosure f = let
     v = freeVars f
@@ -180,7 +183,7 @@ freshVar f =
 -}
 
 variant :: String -> [String] -> String
-variant x xs | trace ("variant " ++ show x) False = undefined
+-- variant x xs | trace ("variant " ++ show x) False = undefined
 variant x xs = if x `elem` xs then variant (x++"'") xs else x
 
 -- Simplify: remove tautologies
@@ -238,35 +241,78 @@ nnf = nnf' . simplify where
         Not (Exists x p) -> Forall x (nnf' $ Not p)
         _ -> f
 
--- Prenex normal form
--- pnf :: Formula -> Formula
--- pnf f = case f of
---     Iff x y -> (x `Imp` y) `And` (y `Imp` x)
---     Not (Forall x p) -> Exists x (Not p)
---     Not (Exists x p) -> Forall x (Not p)
-
 -- Prenex normal form: pull quantifiers out
 pnf :: Formula -> Formula
 pnf = pnf' . nnf where
+    -- pnf' f | trace ("pnf " ++ show f) False = undefined
     pnf' f = case f of
-        And x y -> pullquants $ And (pnf' x) (pnf' y)
-        Or  x y -> pullquants $ Or  (pnf' x) (pnf' y)
+        And x y -> aux $ And (pnf' x) (pnf' y)
+        Or  x y -> aux $ Or  (pnf' x) (pnf' y)
         Forall x p -> Forall x (pnf' p)
         Exists x p -> Exists x (pnf' p)
         _ -> f
-    pullquants f = case f of
-        And (Forall x p) (Forall y q) -> Forall x' (subst (x |=> Var x') p `And` subst (x |=> Var x') q) where x' = variant x $ x : freeVars f
-        Or  (Exists x p) (Exists y q) -> Forall x' (subst (x |=> Var x') p `Or`  subst (x |=> Var x') q) where x' = variant x $ x : freeVars f
-        And (Forall x p) y -> Forall x' (subst (x |=> Var x') p `And` y) where x' = variant x $ x : freeVars f
-        And y (Forall x p) -> Forall x' (y `And` subst (x |=> Var x') p) where x' = variant x $ x : freeVars f
-        Or  (Forall x p) y -> Forall x' (subst (x |=> Var x') p `Or`  y) where x' = variant x $ x : freeVars f
-        Or  y (Forall x p) -> Forall x' (y `Or`  subst (x |=> Var x') p) where x' = variant x $ x : freeVars f
-        And (Exists x p) y -> Exists x' (subst (x |=> Var x') p `And` y) where x' = variant x $ x : freeVars f
-        And y (Exists x p) -> Exists x' (y `And` subst (x |=> Var x') p) where x' = variant x $ x : freeVars f
-        Or  (Exists x p) y -> Exists x' (subst (x |=> Var x') p `Or`  y) where x' = variant x $ x : freeVars f
-        Or  y (Exists x p) -> Exists x' (y `Or`  subst (x |=> Var x') p) where x' = variant x $ x : freeVars f
+    -- aux f | trace ("aux " ++ show f) False = undefined
+    aux f = case f of
+        And (Forall x p) (Forall y q) -> Forall z (aux $ subst (x |=> Var z) p `And` subst (y |=> Var z) q) where z = variant x $ freeVars f
+        Or  (Exists x p) (Exists y q) -> Exists z (aux $ subst (x |=> Var z) p `Or`  subst (y |=> Var z) q) where z = variant x $ freeVars f
+        And (Forall x p) q -> Forall x' (aux $ subst (x |=> Var x') p `And` q) where x' = variant x $ freeVars f
+        And q (Forall x p) -> Forall x' (aux $ q `And` subst (x |=> Var x') p) where x' = variant x $ freeVars f
+        Or  (Forall x p) q -> Forall x' (aux $ subst (x |=> Var x') p `Or`  q) where x' = variant x $ freeVars f
+        Or  q (Forall x p) -> Forall x' (aux $ q `Or`  subst (x |=> Var x') p) where x' = variant x $ freeVars f
+        And (Exists x p) q -> Exists x' (aux $ subst (x |=> Var x') p `And` q) where x' = variant x $ freeVars f
+        And q (Exists x p) -> Exists x' (aux $ q `And` subst (x |=> Var x') p) where x' = variant x $ freeVars f
+        Or  (Exists x p) q -> Exists x' (aux $ subst (x |=> Var x') p `Or`  q) where x' = variant x $ freeVars f
+        Or  q (Exists x p) -> Exists x' (aux $ q `Or`  subst (x |=> Var x') p) where x' = variant x $ freeVars f
         _ -> f
 
+
+
+--- Skolemnization ---
+
+-- List all functions and respective arities in a given formula
+funcs :: Formula -> [(String, Int)]
+funcs = nub . funcs' where
+    funcs' f = case f of
+        Val x -> []
+        Pred _ args -> concat $ map funcsTerm args
+        Not x -> funcs' x
+        And x y -> funcs' x ++ funcs' y
+        Or  x y -> funcs' x ++ funcs' y
+        Imp x y -> funcs' x ++ funcs' y
+        Iff x y -> funcs' x ++ funcs' y
+        Forall x p -> funcs' p
+        Exists x p -> funcs' p
+      where
+        funcsTerm f = case f of
+            Var _ -> []
+            Func name args -> (name, length args) : (concat $ map funcsTerm args)
+
+
+-- Opposite of universal closure: remove leading universal quantifiers
+specialize :: Formula -> Formula
+specialize f = case f of
+    Forall _ p -> specialize p
+    _ -> f
+
+-- Skolemization:
+-- Put in NNF |> skolemize proper |> put in PNF |> remove universal quantifiers
+skolem :: Formula -> Formula
+skolem f = specialize $ pnf $ snd $ skolem' (map fst $ funcs f) $ nnf f where
+    skolem' :: [String] -> Formula -> ([String], Formula)
+    skolem' names f = case f of
+        Exists x p -> 
+            let v = freeVars f
+                name = variant (if null v then "c_"++x else "f_"++x) names
+                func = Func name (map Var v)
+            in  skolem' (name:names) (subst (x |=> func) p)
+        Forall x p -> let (names', p') = skolem' names p in (names', Forall x p')
+        And x y -> skolemBin names And x y
+        Or  x y -> skolemBin names Or  x y
+        _ -> (names, f)
+    skolemBin names fn x y = 
+        let (names',  x') = skolem' names  x
+            (names'', y') = skolem' names' y
+        in  (names'', fn x' y')
 
 
 ----
@@ -355,3 +401,7 @@ main = do
     putStrLn $ prettyPrint $ nnf formula
     putStr "PNF: "
     putStrLn $ prettyPrint $ pnf formula
+    putStr "Funcs: "
+    putStrLn $ show $ funcs formula
+    putStr "Skolemization: "
+    putStrLn $ prettyPrint $ skolem formula
